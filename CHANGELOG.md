@@ -5,6 +5,11 @@ What changed for people using Statement Sweep, newest first. The version is
 
 ## Unreleased
 
+- The extension now lives in the repository's `extension` folder. If you
+  load it unpacked from a clone, export your history first (Settings →
+  History), then load the `extension` folder in `chrome://extensions` and
+  import it there. Chrome treats a copy from a new folder as a new
+  extension, so its history and settings start empty.
 - TriNet W-2 starts from TriNet's own W-2 link, as its Taxes page does.
   The sign-on link it used before was turned down by PaperlessEmployee,
   and the sweep then waited for a sign-in that could never finish. If the

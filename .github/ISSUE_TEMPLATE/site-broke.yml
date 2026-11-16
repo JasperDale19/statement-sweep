@@ -10,7 +10,7 @@ body:
     id: site
     attributes:
       label: Which site
-      options: ["Alpaca", "American Express", "Apple", "Apple Card", "Bilt Card", "Charles Schwab", "Chase", "Chase Business", "Coinbase", "Fidelity", "Fidelity NetBenefits", "First Horizon Bank", "Interactive Brokers", "IRS", "Nelnet", "Optum Bank", "PayPal", "Robinhood", "SDG&E", "Shelby County Trustee", "Simmons Bank", "Spectrum", "State Farm", "TreasuryDirect", "Venmo", "Wealthfront", "Other"]
+      options: ["Alpaca", "American Express", "Apple", "Apple Card", "Bilt Card", "Charles Schwab", "Chase", "Chase Business", "Coinbase", "Fidelity", "Fidelity NetBenefits", "First Horizon Bank", "Interactive Brokers", "IRS", "Nelnet", "Optum Bank", "PayPal", "Robinhood", "SDG&E", "Shelby County Trustee", "Simmons Bank", "Spectrum", "State Farm", "TreasuryDirect", "TriNet", "TriNet W-2", "Venmo", "Wealthfront", "Other"]
     validations:
       required: true
   - type: textarea

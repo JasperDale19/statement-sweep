@@ -1,0 +1,43 @@
+name: Request a site
+description: Ask for a built-in recipe for a bank, card, brokerage or other site.
+labels: [new site]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        First try **Add This Site** in the popup, on the page that lists your statements. If each statement there is a link you can click, it may already work with no recipe.
+
+        Please never attach a statement, a screenshot showing account details, or anything with your sign-in in it.
+  - type: input
+    id: site
+    attributes:
+      label: Site
+      description: Its name and the address of its sign-in page, such as https://www.example.com.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What you want saved
+      multiple: true
+      options: ["Statements", "Tax forms", "Bills", "Receipts", "Other"]
+    validations:
+      required: true
+  - type: dropdown
+    id: addsite
+    attributes:
+      label: Did Add This Site work there?
+      options: ["I have not tried it", "It could not find the statement links", "It found them, but saving failed", "The site shows statements in a viewer or a form, not links"]
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How you get a statement by hand
+      description: The menus and buttons you press, in words. No account details.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Helping
+      options:
+        - label: I could test a recipe on my own account, or write one (see CONTRIBUTING.md).

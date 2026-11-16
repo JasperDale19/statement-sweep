@@ -1,5 +1,7 @@
 # Writing a provider
 
+Paths here are inside `extension/`, the folder Chrome loads.
+
 Each provider is two files. `tools/build.py` makes the rest.
 
 `providers/<id>.meta.json`
