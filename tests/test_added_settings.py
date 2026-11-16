@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://x.test/"
 PART = re.search(r'  <h2>Sites</h2>.*?<p id="addedStatus" role="status"></p>\n', (ROOT / "options.html").read_text(), re.S).group(0)
 STYLE = re.search(r"<style>.*?</style>", (ROOT / "options.html").read_text(), re.S).group(0)

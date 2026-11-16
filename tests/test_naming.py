@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://x.test/"
 TYPES = {".js": "text/javascript", ".html": "text/html", ".css": "text/css"}
 AMEX = {"id": "amex", "name": "American Express", "fileName": "{date} American Express {title}.pdf"}

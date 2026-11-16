@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://trinet.hrpassport.com"
 PAGE = "/ui-hr-portal-money/"
 WHO = "/api-trinet-auth/services/v1.0/authentication/user/token-details"

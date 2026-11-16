@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 HOST = "https://sa.www4.irs.gov"
 PAGE = "/ola/tax_records/transcripts"
 API = "/ola/api/shared/accounts/taxrecords/1.0/taxpayers/transcripts"

@@ -4,7 +4,7 @@ import json
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://app.alpaca.markets"
 PAGE = "/account/documents"
 LIVE = '<button data-testid="account-switcher-button">Invented Ventures LLC - 7QX40031</button>'

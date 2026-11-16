@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 PAGE = "/navigate/ent-documentcenter/statements?poe=fidcom"
 HOST = "https://digitalservices.fidelity.com"
 HUB = "<h1>Document Access Hub</h1>"

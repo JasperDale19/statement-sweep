@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Make providers/index.js and manifest.json's site list from providers/*.meta.json."""
+"""Make extension/providers/index.js and extension/manifest.json's site list from extension/providers/*.meta.json."""
 import json, pathlib, re, sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[1] / "extension"
 metas = [m for m in (json.loads(p.read_text()) for p in sorted((ROOT / "providers").glob("*.meta.json"))) if m.get("enabled", True)]
 NEED = {"id", "name", "match", "listUrl", "pageFile", "fileName", "family"}
 hosts = set()

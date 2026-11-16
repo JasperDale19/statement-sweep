@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://www.bilt.com"
 CARD = "0a1b2c3d-1111-4222-8333-944455556666"
 SCRIPT = """<script>

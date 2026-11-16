@@ -12,7 +12,7 @@ from urllib.parse import parse_qs
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://www.paperlessemployee.com"
 PE = "/trinettaxforms/PE"
 LIST, SUBMIT = f"{PE}/TaxStatements", f"{PE}/TaxStatements/SubmitOrderV4"
