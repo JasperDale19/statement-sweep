@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://x.test/"
 TYPES = {".js": "text/javascript", ".html": "text/html", ".css": "text/css"}
 CHROME = """
@@ -281,7 +281,7 @@ from datetime import date, timedelta
 import json as _json
 TODAY = date(2026, 11, 9)
 # Every site that is switched on, as tools/build.py lists them.
-SITES = [m["id"] for m in (_json.loads(p.read_text()) for p in sorted((Path(__file__).resolve().parents[1] / "providers").glob("*.meta.json"))) if m.get("enabled", True)]
+SITES = [m["id"] for m in (_json.loads(p.read_text()) for p in sorted((Path(__file__).resolve().parents[1] / "extension" / "providers").glob("*.meta.json"))) if m.get("enabled", True)]
 
 
 def monthly(site, newest, n=12, gap=30, prefix="card"):

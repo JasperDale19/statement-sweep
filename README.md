@@ -1,6 +1,7 @@
 # Statement Sweep
 
 [![CI](https://github.com/JasperDale19/statement-sweep/actions/workflows/ci.yml/badge.svg)](https://github.com/JasperDale19/statement-sweep/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/JasperDale19/statement-sweep)](https://github.com/JasperDale19/statement-sweep/releases/latest)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 A Chrome extension that saves your own statements, bills and tax forms from
@@ -36,7 +37,7 @@ nothing anywhere.
 
 ## Sites
 
-27 sites are switched on. Each is a recipe in `providers/`, tested in a real
+27 sites are switched on. Each is a recipe in `extension/providers/`, tested in a real
 Chromium against stand-in pages.
 
 | Kind | Sites |
@@ -83,7 +84,7 @@ built-in recipe instead.
 
 1. Download or clone this repository.
 2. Open `chrome://extensions`, turn on **Developer mode**, press **Load
-   unpacked**, and choose the folder.
+   unpacked**, and choose its `extension` folder.
 3. Press the extension's icon, then **Get New Documents**, or the play button
    beside one site.
 
@@ -138,9 +139,9 @@ full.
 
 New built-in sites are welcome. Each one is two small files and a test:
 
-- **`providers/<id>.meta.json`:** the site's hosts, the page with its
+- **`extension/providers/<id>.meta.json`:** the site's hosts, the page with its
   statements, the file name, and how documents are saved.
-- **`providers/<id>.page.js`:** the recipe. It runs inside the site's own
+- **`extension/providers/<id>.page.js`:** the recipe. It runs inside the site's own
   signed-in page, reads the list of documents, and fetches or clicks to save
   each one.
 - **`tests/test_<id>_page.py`:** runs the recipe in a real Chromium against
@@ -154,7 +155,7 @@ them.
 [CONTRIBUTING.md](CONTRIBUTING.md) explains how the extension works and walks
 through adding a site step by step, with starting files for each part. It
 also covers testing and the project's rules. The full recipe contract is in
-[providers/README.md](providers/README.md). If you would rather not write
+[extension/providers/README.md](extension/providers/README.md). If you would rather not write
 code, [open an issue](https://github.com/JasperDale19/statement-sweep/issues/new/choose)
 naming the site, and never attach a statement.
 
@@ -170,7 +171,8 @@ python3 tools/package.py        # the Chrome Web Store upload
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. It
 explains the whole system, testing and policies, and its safety rules come
-first. Security problems go privately, as
+first. Everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md). Security problems go privately, as
 [SECURITY.md](SECURITY.md) says. Changes are listed in
 [CHANGELOG.md](CHANGELOG.md).
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://x.test/"
 STORE = "https://mountain-storage.s3.amazonaws.com/"
 PDF = b"%PDF-1.4 invented test document\n%%EOF"

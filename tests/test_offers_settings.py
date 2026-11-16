@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://x.test/"
 # The Card Offers part of options.html, as it is there.
 PART = re.search(r'  <h2 id="offersHead">.*?<p id="offersStatus" role="status"></p>\n', (ROOT / "options.html").read_text(), re.S).group(0)

@@ -14,7 +14,7 @@ import fnmatch
 import pytest
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 METAS = [m for m in (json.loads(p.read_text()) for p in sorted((ROOT / "providers").glob("*.meta.json"))) if m.get("enabled", True)]
 
 # Labels a recipe must never press, alone and inside rows that also say

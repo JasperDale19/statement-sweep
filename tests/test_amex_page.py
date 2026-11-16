@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 LIST = "https://global.americanexpress.com/activity/statements"
 PRE = "myca-activity-statements/common/Table"
 

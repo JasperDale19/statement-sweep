@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 HOST = "https://apps2.shelbycountytrustee.com"
 def bill_address(parcel, **more):
     data = base64.b64encode(json.dumps({"parcel": parcel, "billNumber": 11223344, **more}).encode()).decode()

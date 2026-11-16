@@ -9,7 +9,7 @@ Please report privately, through GitHub's **Report a vulnerability** button
 on this repository's Security tab. Do not open a public issue, and do not
 include anyone's statements, account numbers or sign-in details.
 
-Say what an attacker could do, which version (`manifest.json`) and site it
+Say what an attacker could do, which version (`extension/manifest.json`) and site it
 affects, and how to see it happen. You will hear back within a week.
 
 ## In scope

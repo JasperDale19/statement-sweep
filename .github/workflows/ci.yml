@@ -20,14 +20,14 @@ jobs:
       - name: The site list matches the metas
         run: |
           python3 tools/build.py
-          git diff --exit-code -- providers/index.js manifest.json || {
-            echo "::error::providers/index.js or manifest.json is out of date. Run python3 tools/build.py and commit the result."
+          git diff --exit-code -- extension/providers/index.js extension/manifest.json || {
+            echo "::error::extension/providers/index.js or extension/manifest.json is out of date. Run python3 tools/build.py and commit the result."
             exit 1
           }
       - name: Nothing personal in the repository
         run: python3 tools/privacy_check.py
       - name: Every script parses
-        run: for f in *.js providers/*.js; do node --check "$f" || exit 1; done
+        run: for f in extension/*.js extension/providers/*.js; do node --check "$f" || exit 1; done
 
   tests:
     name: Tests

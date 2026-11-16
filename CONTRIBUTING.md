@@ -3,12 +3,14 @@
 Thank you for helping. Statement Sweep runs inside people's bank, card,
 brokerage and tax accounts, so the rules below are about keeping those
 accounts safe first and code style second. A pull request that breaks one of
-the safety rules is not merged, however useful it is.
+the safety rules is not merged, however useful it is. Everyone taking part
+follows the [code of conduct](CODE_OF_CONDUCT.md).
 
 This guide covers:
 
 - [The safety rules](#the-safety-rules)
 - [How Statement Sweep works](#how-statement-sweep-works)
+- [Repository layout](#repository-layout)
 - [Setting up](#setting-up)
 - [Adding a site](#adding-a-site), step by step
 - [Testing](#testing)
@@ -76,7 +78,7 @@ For each site in a sync, the engine:
    named by `fileName` (`naming.js`), and added to the record.
 5. **Writes a log** of what happened, with counts and reasons (`log.js`).
 
-The pieces:
+The pieces, all inside `extension/`:
 
 | File | What it does |
 |---|---|
@@ -97,7 +99,25 @@ The pieces:
 | `popup.*`, `options.*`, `offers.html` | The popup, Settings and the Card Offers page. |
 
 The full recipe contract, every meta key and the log format are in
-[providers/README.md](providers/README.md). Read it before you write a recipe.
+[extension/providers/README.md](extension/providers/README.md). Read it before you write a recipe.
+
+## Repository layout
+
+```
+extension/          the extension itself: what Chrome loads and the store gets
+  manifest.json
+  background.js     the engine, and the other scripts and pages beside it
+  icons/
+  providers/        one meta and one recipe per site, shared.js, index.js
+tests/              pytest + Playwright, one file per recipe and per part
+tools/              build.py, package.py, privacy_check.py, snapshot.py
+docs/               images for the README
+store/              the Chrome Web Store listing and screenshots
+.github/            CI, Dependabot, issue forms, the pull request template
+```
+
+The license, notices, privacy policy and these guides stay at the top.
+`tools/package.py` zips `extension/` with them for the Chrome Web Store.
 
 ## Setting up
 
@@ -107,8 +127,8 @@ pip install -r requirements-dev.txt
 python -m playwright install chromium
 ```
 
-Load the folder at `chrome://extensions` with Developer mode on and **Load
-unpacked**. After changing a `*.meta.json` or any engine file, press the
+Load the `extension` folder at `chrome://extensions` with Developer mode on
+and **Load unpacked**. After changing a `*.meta.json` or any engine file, press the
 extension's reload button there. A page refresh is not enough: Chrome keeps
 the old background worker, and with it the old site list.
 
@@ -145,7 +165,7 @@ its bytes start `%PDF-`. Keep notes on what you saw, never the values.
 
 ### 2. Write the meta
 
-`providers/<id>.meta.json`, with a short lowercase `id`:
+`extension/providers/<id>.meta.json`, with a short lowercase `id`:
 
 ```json
 {
@@ -167,11 +187,12 @@ in through another company, the sign-in host stays out of `match`: the engine
 waits while the tab is there.
 
 Then run `python3 tools/build.py`. It checks the meta and rewrites
-`providers/index.js` and the manifest's `host_permissions`. Commit all three.
+`extension/providers/index.js` and the manifest's `host_permissions`. Commit all
+three.
 
 ### 3. Write the recipe
 
-`providers/<id>.page.js` runs inside the site's page, in the extension's
+`extension/providers/<id>.page.js` runs inside the site's page, in the extension's
 isolated world, and sets `globalThis.__sweep`. A starting point for a `fetch`
 site:
 
@@ -254,7 +275,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import sync_playwright
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1] / "extension"
 BASE = "https://secure.examplebank.com"
 LIST = {"statements": [{"id": "ST-000002", "date": "2031-02-28"}, {"id": "ST-000001", "date": "2031-01-31"}]}
 
@@ -403,7 +424,7 @@ a reason.
 Engine and recipe log lines hold counts, states, layouts and reasons. The
 engine masks long digit runs and drops address queries, but a recipe does
 not rely on that: it never logs a value it read. The format is in
-[providers/README.md](providers/README.md#logs).
+[extension/providers/README.md](extension/providers/README.md#logs).
 
 ### Card offers
 
