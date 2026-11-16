@@ -5,6 +5,10 @@ What changed for people using Statement Sweep, newest first. The version is
 
 ## Unreleased
 
+- Import History says plainly that it can bring in which sites are switched
+  off, not only folder and file names, and a fresh copy takes the file's
+  settings unless you untick the box. Before, a copy loaded from a new
+  folder came back with every site switched on.
 - The extension now lives in the repository's `extension` folder. If you
   load it unpacked from a clone, export your history first (Settings →
   History), then load the `extension` folder in `chrome://extensions` and
