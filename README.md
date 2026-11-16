@@ -53,7 +53,7 @@ Chromium against stand-in pages.
 Sites change their pages without notice, so a recipe can break. If one
 does, [open an issue](https://github.com/JasperDale420/statement-sweep/issues/new/choose).
 To add a site for yourself, see [Adding a site](#adding-a-site). To add a
-built-in recipe for everyone, see [providers/README.md](providers/README.md).
+built-in recipe for everyone, see [Contributing a site](#contributing-a-site).
 
 ## Adding a site
 
@@ -134,6 +134,30 @@ or wrong documents, a locked or flagged account, offers added or not added,
 fees, and lost data. Sections 15 to 17 of the [license](LICENSE) say this in
 full.
 
+## Contributing a site
+
+New built-in sites are welcome. Each one is two small files and a test:
+
+- **`providers/<id>.meta.json`:** the site's hosts, the page with its
+  statements, the file name, and how documents are saved.
+- **`providers/<id>.page.js`:** the recipe. It runs inside the site's own
+  signed-in page, reads the list of documents, and fetches or clicks to save
+  each one.
+- **`tests/test_<id>_page.py`:** runs the recipe in a real Chromium against
+  stand-in pages with invented values. It never touches the real site.
+
+Recipes only read and download. They never sign in, submit a form or move
+money, and they stop when unsure. Every recipe is also run against a page
+full of pay, transfer and settings controls, to prove it presses none of
+them.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how the extension works and walks
+through adding a site step by step, with starting files for each part. It
+also covers testing and the project's rules. The full recipe contract is in
+[providers/README.md](providers/README.md). If you would rather not write
+code, [open an issue](https://github.com/JasperDale420/statement-sweep/issues/new/choose)
+naming the site, and never attach a statement.
+
 ## Develop
 
 ```bash
@@ -144,8 +168,9 @@ python -m pytest -n auto --dist loadfile
 python3 tools/package.py        # the Chrome Web Store upload
 ```
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request: its
-safety rules come first. Security problems go privately, as
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. It
+explains the whole system, testing and policies, and its safety rules come
+first. Security problems go privately, as
 [SECURITY.md](SECURITY.md) says. Changes are listed in
 [CHANGELOG.md](CHANGELOG.md).
 
