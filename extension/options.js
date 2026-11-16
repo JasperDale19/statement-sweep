@@ -317,14 +317,24 @@ async function drawImport() {
   if (!plan.length) notes.push("The file has no documents for these sites.");
   else notes.push(added ? `${plural(added, "document")} will be added to the record. Nothing already in it is removed.` : "Everything in the file is already in the record.");
   if (pending.unknown.length) notes.push(`Left out, as this copy does not have ${pending.unknown.length === 1 ? "this site" : "these sites"}: ${pending.unknown.join(", ")}.`);
-  $("importNote").textContent = notes.join(" ");
+  // What the file can bring besides the record, said in the box's own label,
+  // so it is plain that switched-off sites come with it.
+  const brings = [pending.naming && "folder and file name settings", pending.off && "list of switched-off sites"].filter(Boolean);
   const carries = [pending.naming && "its main folder, folder and file name patterns", pending.off && "which sites are switched off"].filter(Boolean);
+  if (brings.length && !added) notes.push("Tick the box below to bring in its settings.");
+  $("importNote").textContent = notes.join(" ");
+  $("importSettingsLabel").textContent = `Also use the file's ${brings.join(" and ")}`;
+  // A copy with no record and no settings of its own (a new install, or one
+  // loaded from a new folder) takes the file's settings unless you untick it.
+  const kept = await chrome.storage.local.get(null);
+  const fresh = !Object.keys(kept).some((k) => k.startsWith("seen:")) && kept.naming === undefined && kept.off === undefined;
+  $("importSettings").checked = Boolean(brings.length) && fresh;
   $("importSettingsRow").hidden = !carries.length;
   $("importSettingsHint").textContent = carries.length
     ? `Replaces ${carries.join(", and ")} here.${dirty && pending.naming ? " Changes above that are not saved yet are replaced too." : ""}`
     : "";
   pending.added = added;
-  $("importConfirm").disabled = !added;
+  $("importConfirm").disabled = !added && !$("importSettings").checked;
   $("importRow").hidden = false;
 }
 

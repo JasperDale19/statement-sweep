@@ -295,7 +295,9 @@ def test_ticking_the_box_uses_and_shows_the_files_settings(tab):
     choose(tab, good(naming={"base": "Finance", "folder": "{year}", "file": "{date}"}, off=["irs"]))
     tab.wait_for_selector("#importRow", state="visible")
     assert "Everything in the file is already" in tab.inner_text("#importNote") and "not saved yet" in tab.inner_text("#importSettingsHint")
-    assert tab.is_disabled("#importConfirm")
+    assert "Tick the box below to bring in its settings." in tab.inner_text("#importNote")
+    assert tab.inner_text("label[for=importSettings]") == "Also use the file's folder and file name settings and list of switched-off sites"
+    assert not tab.is_checked("#importSettings") and tab.is_disabled("#importConfirm")
     tab.check("#importSettings")
     assert tab.is_enabled("#importConfirm")
     tab.click("#importConfirm")
@@ -319,8 +321,33 @@ def test_the_controls_are_reachable_by_keyboard(tab):
     assert tab.evaluate("document.activeElement.id") == "importCancel"
     tab.keyboard.press("Shift+Tab")
     assert tab.evaluate("document.activeElement.id") == "importSettings"
-    tab.keyboard.press("Space")
     assert tab.is_checked("#importSettings")
+    tab.keyboard.press("Space")
+    assert not tab.is_checked("#importSettings")
+
+
+# A new install, or a copy loaded from a new folder, has no record and no
+# settings of its own: it takes the file's settings unless you untick the box,
+# whose label says switched-off sites come with them.
+def test_a_fresh_copy_takes_the_files_settings_including_switched_off_sites(tab):
+    seed(tab, {}, "options.html")
+    choose(tab, good(naming={"base": "Statement Sweep", "folder": "{provider}", "file": ""}, off=["irs", "apple"]))
+    tab.wait_for_selector("#importRow", state="visible")
+    assert tab.is_checked("#importSettings")
+    assert "switched-off sites" in tab.inner_text("label[for=importSettings]")
+    assert "Tick the box" not in tab.inner_text("#importNote")
+    tab.click("#importConfirm")
+    tab.wait_for_function("document.getElementById('historyStatus').textContent !== ''")
+    assert store(tab)["off"] == ["irs", "apple"] and store(tab)["seen:amex"] == ["a1", "a2", "a3"]
+    assert "switched off" in tab.inner_text("#historyStatus")
+
+
+def test_a_file_with_only_switched_off_sites_says_so_in_the_label(tab):
+    seed(tab, {"seen:amex": ["a1"]}, "options.html")
+    choose(tab, good(off=["irs"]))
+    tab.wait_for_selector("#importRow", state="visible")
+    assert tab.inner_text("label[for=importSettings]") == "Also use the file's list of switched-off sites"
+    assert not tab.is_checked("#importSettings")
 
 
 # Each document's date, and which are tax forms (cadence.js), travel too.
