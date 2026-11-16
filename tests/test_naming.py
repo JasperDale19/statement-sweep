@@ -408,8 +408,9 @@ def test_each_menu_choice_says_what_it_gives_once_the_menu_is_opened(tab):
     assert files[2] == "Year and Month, Site, Title: 2026-10 American Express Monthly Statement" and files[-1] == "Custom"
     tab.click("#perSite")
     tab.select_option("#scope", "sdge")
-    tab.focus("#filePreset")
-    tab.keyboard.press("ArrowDown")
+    # Pressed open, not by a key: an arrow key opens the menu on a Mac but
+    # picks the next choice on Linux and Windows.
+    tab.dispatch_event("#filePreset", "pointerdown")
     assert texts("#filePreset")[0] == "Same as All Sites: 2026-10-28 SDG&E Utility Bill"
 
 
