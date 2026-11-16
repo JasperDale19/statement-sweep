@@ -14,6 +14,9 @@ const FOLDER_PRESETS = [["{provider}", "By Site"], ["{provider}/{year}", "By Sit
 const FILE_PRESETS = [["", "Each Site's Usual Name"], ["{date} {provider}[ {title}]", "Date, Site, Title"], ["{date:yyyy-mm} {provider}[ {title}]", "Year and Month, Site, Title"], ["{provider} {date}[ {title}]", "Site, Date, Title"]];
 const PRESETS = { folder: FOLDER_PRESETS, file: FILE_PRESETS };
 let lastPattern = "file";
+// A pattern box is shown only when its menu says Custom, or while you are
+// writing one, so the usual choices stay two menus.
+const open = { folder: false, file: false };
 
 let draft = normalise((await chrome.storage.local.get("naming")).naming);
 let dirty = false;
@@ -43,16 +46,52 @@ function firstProblem() {
 }
 
 function showStatus(text, kind = "") {
+  // The Save bar comes up once there is something to say about saving.
+  $("actions").hidden = !text;
   $("status").textContent = text;
   $("status").dataset.kind = kind;
+}
+
+// The site the example and the menus' examples are shown for.
+const exampleSite = () => PROVIDERS.find((p) => p.id === scope()) || PROVIDERS.find((p) => p.id === "amex") || PROVIDERS[0];
+
+// What one pattern alone makes for the example site, worked out by the same
+// code that names real files: the folders for a folder pattern, the name for
+// a file one. So a menu says what each choice gives, not only its name.
+function resultOf(field, pattern) {
+  const parts = pathFor({ base: "", folder: "", file: "", providers: {}, [field]: pattern }, exampleSite(), SAMPLE).split("/");
+  const name = parts.pop().replace(/\.pdf$/i, "");
+  return field === "file" ? name : parts.join(" / ");
+}
+// Each choice keeps its short name, and its name with what it gives. The
+// closed menu shows the short one (the Example row below says the whole
+// path); the open menu shows what each choice gives, to choose by.
+function choice(label, field, pattern) {
+  const result = checkPattern(pattern, { isFile: field === "file" }) ? "" : resultOf(field, pattern);
+  const option = new Option(label, pattern);
+  option.dataset.short = label;
+  option.dataset.long = result ? `${label}: ${result}` : label;
+  return option;
+}
+const showResults = (menu, on) => {
+  for (const option of menu.options) if (option.dataset.long) option.text = on ? option.dataset.long : option.dataset.short;
+};
+
+// Rules for one site are kept out of the way until someone asks for them,
+// and shown whenever any site already has its own.
+let perSite = false;
+const hasOwnRules = () => Object.values(draft.providers).some((set) => set && (set.folder || set.file));
+function drawScope() {
+  const shown = perSite || hasOwnRules() || Boolean(scope());
+  $("scopeRow").hidden = !shown;
+  $("perSite").hidden = shown;
 }
 
 function drawPreview() {
   const problem = firstProblem();
   $("problem").textContent = problem;
   $("save").disabled = Boolean(problem);
-  const provider = PROVIDERS.find((p) => p.id === scope()) || PROVIDERS.find((p) => p.id === "amex") || PROVIDERS[0];
-  $("previewhead").textContent = `Example for ${provider.name}`;
+  const provider = exampleSite();
   const path = problem ? "" : pathFor(inherit(), provider, SAMPLE);
   $("preview").textContent = path && destination ? `${destination.name}/${withinChosen(destination.name, path)}` : path;
 }
@@ -61,15 +100,15 @@ function drawLocation() {
   $("destName").textContent = destination ? destination.name : "Downloads Folder";
   $("useDownloads").hidden = !destination;
   $("chooseDest").textContent = destination ? "Change…" : "Choose Folder…";
-  $("desthint").textContent = destination ? "Only the folder's name is shown here. Your Mac keeps its full location." : "Or choose a folder elsewhere. If Chrome won't allow one, such as Documents itself, press New Folder in its window and choose that.";
+  $("desthint").textContent = destination ? "" : "Or choose another folder, such as a new one inside Documents.";
   $("inboxRow").hidden = !destination;
   $("inboxState").textContent = inbox ? "Allowed" : "Not Allowed Yet";
   $("inboxState").dataset.kind = inbox ? "" : "needed";
   $("allowInbox").textContent = inbox ? "Choose Again…" : "Allow Access…";
   // Once allowed, the steps for allowing it are no longer needed.
   $("inboxhint").textContent = inbox
-    ? `Some sites can only save to Downloads, so their files pass through “${INBOX}” there on the way to yours.`
-    : `Some sites can only save to Downloads, so their files pass through a folder there on the way to yours. Statement Sweep has already made it. Choose “${INBOX}” in Downloads when asked.`;
+    ? ""
+    : `Some sites save only to Downloads, and pass through a folder there. Choose “${INBOX}” in Downloads when asked.`;
   $("basehint").textContent = destination ? "A folder inside the one you chose. Leave blank to save directly in it." : "Inside Chrome's Downloads folder.";
 }
 
@@ -135,14 +174,25 @@ function drawPreset(field) {
   const presets = PRESETS[field];
   // A preset whose pattern is blank means "inherit" when one site is chosen.
   const shown = id ? presets.filter(([pattern]) => pattern) : presets;
-  const options = [...(id ? [new Option("Same as All Sites", INHERIT)] : []), ...shown.map(([pattern, label]) => new Option(label, pattern))];
+  const general = id ? draft[field] : "";
+  const options = [...(id ? [choice("Same as All Sites", field, general)] : []),
+    ...shown.map(([pattern, label]) => choice(label, field, pattern)), new Option("Custom", CUSTOM)];
+  if (id) options[0].value = INHERIT;
   const known = (id && !value) || shown.some(([pattern]) => pattern === value);
-  if (!known) options.push(new Option("Custom", CUSTOM));
   menu.replaceChildren(...options);
+  showResults(menu, document.activeElement === menu && menu.dataset.open === "1");
   menu.value = id && !value ? INHERIT : known ? value : CUSTOM;
+  $(field).hidden = !open[field] && menu.value !== CUSTOM;
+  // The field buttons and the pattern reference go with the pattern boxes.
+  const writing = !$("folder").hidden || !$("file").hidden;
+  $("insertRow").hidden = !writing;
+  $("patternRef").hidden = !writing;
+  $("filehint").hidden = $("file").hidden;
 }
 
 function drawFields() {
+  open.folder = open.file = false;
+  drawScope();
   const id = scope();
   const set = id ? draft.providers[id] || {} : draft;
   $("folder").value = set.folder || (id ? "" : draft.folder);
@@ -171,13 +221,30 @@ $("base").addEventListener("input", () => { draft.base = $("base").value; change
 for (const field of ["folder", "file"]) {
   $(field).addEventListener("focus", () => { lastPattern = field; });
   $(field).addEventListener("input", () => {
+    open[field] = true;
     setPattern(field, $(field).value);
     drawPreset(field);
     changed();
   });
+  // Opening the menu (a press, or a key on it) shows what each choice gives.
+  const menu = $(`${field}Preset`);
+  const reveal = () => { menu.dataset.open = "1"; showResults(menu, true); };
+  const conceal = () => { menu.dataset.open = ""; showResults(menu, false); };
+  menu.addEventListener("pointerdown", reveal);
+  menu.addEventListener("keydown", (e) => { if ([" ", "Enter", "ArrowDown", "ArrowUp", "F4"].includes(e.key) || e.altKey) reveal(); });
+  menu.addEventListener("blur", conceal);
   $(`${field}Preset`).addEventListener("change", () => {
+    conceal();
     const value = $(`${field}Preset`).value;
-    if (value === CUSTOM) return;
+    if (value === CUSTOM) {
+      // The pattern so far stays, ready to be changed.
+      open[field] = true;
+      drawPreset(field);
+      lastPattern = field;
+      $(field).focus();
+      return;
+    }
+    open[field] = false;
     $(field).value = value === INHERIT ? "" : value;
     setPattern(field, $(field).value);
     drawPreset(field);
@@ -197,6 +264,11 @@ document.getElementById("insert").addEventListener("click", (e) => {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 });
 $("scope").addEventListener("change", drawFields);
+$("perSite").addEventListener("click", () => {
+  perSite = true;
+  drawScope();
+  $("scope").focus();
+});
 
 $("save").addEventListener("click", async () => {
   if (firstProblem()) return;

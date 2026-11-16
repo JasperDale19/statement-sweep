@@ -264,15 +264,37 @@ def test_use_downloads_goes_back(tab):
     forget(tab)
 
 
+def custom(tab, field):
+    """A pattern box shows once its menu says Custom, as a person would choose it."""
+    tab.select_option(f"#{field}Preset", "__custom")
+
+
 def test_the_page_opens_on_the_defaults_with_an_example(tab):
     settings(tab)
     assert tab.input_value("#base") == "Statement Sweep" and tab.input_value("#folder") == "{provider}"
     assert tab.inner_text("#preview") == "Statement Sweep/American Express/2026-10-28 American Express Monthly Statement.pdf"
+    # The usual choices are two menus: the pattern boxes, field buttons,
+    # reference and Save bar wait until they are wanted.
+    for hidden in ("#folder", "#file", "#insertRow", "#patternRef", "#actions"):
+        assert tab.locator(hidden).is_hidden(), hidden
+
+
+def test_choosing_custom_opens_the_pattern_with_its_tools_and_typing_keeps_it_open(tab):
+    settings(tab)
+    custom(tab, "folder")
+    assert tab.is_visible("#folder") and tab.is_visible("#insertRow") and tab.is_visible("#patternRef")
+    assert tab.evaluate("document.activeElement.id") == "folder" and tab.input_value("#folder") == "{provider}"
+    tab.fill("#folder", "{provider}/{year}")
+    assert tab.input_value("#folderPreset") == "{provider}/{year}" and tab.is_visible("#folder")
+    assert tab.is_visible("#actions") and tab.inner_text("#status") == "Not saved yet"
+    tab.select_option("#folderPreset", "{provider}")
+    assert tab.locator("#folder").is_hidden() and tab.locator("#insertRow").is_hidden()
 
 
 def test_the_example_follows_what_is_typed_and_save_stores_it(tab):
     settings(tab)
     tab.fill("#base", "Finance")
+    custom(tab, "file")
     tab.fill("#file", "{date} {provider}")
     assert tab.inner_text("#preview") == "Finance/American Express/2026-10-28 American Express.pdf"
     assert tab.inner_text("#status") == "Not saved yet"
@@ -284,6 +306,7 @@ def test_the_example_follows_what_is_typed_and_save_stores_it(tab):
 
 def test_a_bad_pattern_shows_why_and_cannot_be_saved(tab):
     settings(tab)
+    custom(tab, "folder")
     tab.fill("#folder", "{nope}")
     assert "{nope}" in tab.inner_text("#problem")
     assert tab.is_disabled("#save") and tab.inner_text("#preview") == ""
@@ -292,8 +315,10 @@ def test_a_bad_pattern_shows_why_and_cannot_be_saved(tab):
 
 def test_one_sites_pattern_is_kept_apart_from_the_others(tab):
     settings(tab)
+    tab.click("#perSite")
     tab.select_option("#scope", "amex")
     assert tab.input_value("#folder") == ""
+    custom(tab, "file")
     tab.fill("#file", "amex only")
     assert tab.inner_text("#preview").endswith("/amex only.pdf")
     tab.select_option("#scope", "sdge")
@@ -306,7 +331,9 @@ def test_one_sites_pattern_is_kept_apart_from_the_others(tab):
 
 def test_a_bad_pattern_on_another_site_still_blocks_save(tab):
     settings(tab)
+    tab.click("#perSite")
     tab.select_option("#scope", "amex")
+    custom(tab, "file")
     tab.fill("#file", "{nope}")
     tab.select_option("#scope", "")
     assert "American Express" in tab.inner_text("#problem") and tab.is_disabled("#save")
@@ -315,25 +342,28 @@ def test_a_bad_pattern_on_another_site_still_blocks_save(tab):
 def test_a_preset_fills_the_pattern_and_the_menu_follows_typing(tab):
     settings(tab)
     assert tab.input_value("#folderPreset") == "{provider}"
-    tab.select_option("#folderPreset", label="By Site and Year")
+    tab.select_option("#folderPreset", "{provider}/{year}")
     assert tab.input_value("#folder") == "{provider}/{year}"
     assert "/American Express/2026/" in tab.inner_text("#preview")
+    custom(tab, "folder")
     tab.fill("#folder", "Mine/{year}")
     assert tab.locator("#folderPreset option:checked").inner_text() == "Custom"
 
 
 def test_one_site_can_go_back_to_the_general_pattern(tab):
     settings(tab)
+    tab.click("#perSite")
     tab.select_option("#scope", "amex")
     assert tab.locator("#filePreset option:checked").inner_text() == "Same as All Sites"
-    tab.select_option("#filePreset", label="Site, Date, Title")
+    tab.select_option("#filePreset", "{provider} {date}[ {title}]")
     assert tab.input_value("#file") == "{provider} {date}[ {title}]"
-    tab.select_option("#filePreset", label="Same as All Sites")
+    tab.select_option("#filePreset", "__inherit")
     assert tab.input_value("#file") == ""
 
 
 def test_an_insert_button_adds_a_field_at_the_caret(tab):
     settings(tab)
+    custom(tab, "file")
     tab.fill("#file", "ab")
     tab.evaluate("document.getElementById('file').setSelectionRange(1, 1)")
     tab.click(".chip[data-insert='{year}']")
@@ -343,9 +373,44 @@ def test_an_insert_button_adds_a_field_at_the_caret(tab):
 
 def test_an_insert_button_goes_to_the_folder_pattern_when_that_was_last_used(tab):
     settings(tab)
+    custom(tab, "folder")
     tab.fill("#folder", "x/")
     tab.click(".chip[data-insert='{provider}']")
     assert tab.input_value("#folder") == "x/{provider}"
+
+
+def test_one_site_rules_wait_behind_a_link_and_open_on_it(tab):
+    settings(tab)
+    assert tab.locator("#scopeRow").is_hidden() and tab.is_visible("#perSite")
+    tab.click("#perSite")
+    assert tab.is_visible("#scopeRow") and tab.locator("#perSite").is_hidden()
+    assert tab.evaluate("document.activeElement.id") == "scope"
+
+
+def test_a_site_with_its_own_rules_shows_them_without_asking(tab):
+    settings(tab, {"base": "Statement Sweep", "folder": "{provider}", "file": "", "providers": {"sdge": {"file": "{date} Power"}}})
+    assert tab.is_visible("#scopeRow") and tab.locator("#perSite").is_hidden()
+
+
+def test_each_menu_choice_says_what_it_gives_once_the_menu_is_opened(tab):
+    settings(tab)
+    texts = lambda sel: tab.eval_on_selector_all(f"{sel} option", "os => os.map((o) => o.text)")
+    # Closed, the menu is short: the Example row already says the whole path.
+    assert texts("#folderPreset") == ["By Site", "By Site and Year", "By Year", "All in One Folder", "Custom"]
+    tab.dispatch_event("#folderPreset", "pointerdown")
+    tab.focus("#folderPreset")
+    folders = texts("#folderPreset")
+    assert folders == ["By Site: American Express", "By Site and Year: American Express / 2026", "By Year: 2026", "All in One Folder", "Custom"]
+    tab.focus("#filePreset")
+    assert texts("#folderPreset")[0] == "By Site", "leaving a menu makes it short again"
+    tab.dispatch_event("#filePreset", "pointerdown")
+    files = texts("#filePreset")
+    assert files[2] == "Year and Month, Site, Title: 2026-10 American Express Monthly Statement" and files[-1] == "Custom"
+    tab.click("#perSite")
+    tab.select_option("#scope", "sdge")
+    tab.focus("#filePreset")
+    tab.keyboard.press("ArrowDown")
+    assert texts("#filePreset")[0] == "Same as All Sites: 2026-10-28 SDG&E Utility Bill"
 
 
 def test_saved_settings_come_back_and_restore_needs_save(tab):

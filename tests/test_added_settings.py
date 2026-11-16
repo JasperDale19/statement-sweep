@@ -93,9 +93,7 @@ def rows(t):
 def test_with_none_added_it_says_how_to_add_one(browser):
     t = open_settings(browser)
     t.wait_for_selector("#addedList .row")
-    assert t.inner_text("#addedList") == "None yet. To add one, open its statements page and press Add This Site… at the bottom of Statement Sweep's menu."
-    assert t.inner_text("#addedNote") == ("Add This Site works only where each statement is a link you can click. Sites that show "
-                                          "statements in a viewer, behind a form or a date picker, need a built-in recipe instead.")
+    assert t.inner_text("#addedList") == "None yet. On a site's statements page, press Add This Site… in Statement Sweep's menu."
     t.close()
 
 

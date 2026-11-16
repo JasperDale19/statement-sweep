@@ -114,8 +114,8 @@ def test_the_pace_and_cap_are_said_from_the_engines_own_numbers(browser):
     t = open_settings(browser)
     t.wait_for_function("document.getElementById('offersPace').textContent.length > 0")
     pace = t.inner_text("#offersPace")
-    assert pace.startswith("A site's first sync adds every offer it has")
-    assert "Later syncs add only new ones. 1.5 to 4 seconds apart, soonest to expire first, and never more than 500 a sync." in pace
+    assert pace.startswith("The first sync adds every offer")
+    assert "later ones add only new offers. 1.5 to 4 seconds apart, at most 500 a sync" in pace
     assert "signs you out, asks you to confirm something, or says to slow down" in t.inner_text("#offersPace")
     t.close()
 
