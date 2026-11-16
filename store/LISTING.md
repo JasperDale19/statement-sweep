@@ -53,9 +53,9 @@ Save the user's own statements and account documents, from sites the user signs 
 **Data usage:** Nothing is collected or transmitted. Everything stays on the user's computer. Tick the three certifications.
 
 **Privacy policy URL:**
-https://github.com/JasperDale420/statement-sweep/blob/main/PRIVACY.md
+https://github.com/JasperDale19/statement-sweep/blob/main/PRIVACY.md
 
 **Support URL:**
-https://github.com/JasperDale420/statement-sweep/issues
+https://github.com/JasperDale19/statement-sweep/issues
 
 **Store images:** `store/screenshot-1.png`, `store/screenshot-2.png`, `store/screenshot-3.png` (1280 x 800), made with invented data. The icon is taken from the package.

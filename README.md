@@ -1,6 +1,6 @@
 # Statement Sweep
 
-[![CI](https://github.com/JasperDale420/statement-sweep/actions/workflows/ci.yml/badge.svg)](https://github.com/JasperDale420/statement-sweep/actions/workflows/ci.yml)
+[![CI](https://github.com/JasperDale19/statement-sweep/actions/workflows/ci.yml/badge.svg)](https://github.com/JasperDale19/statement-sweep/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 A Chrome extension that saves your own statements, bills and tax forms from
@@ -51,7 +51,7 @@ Chromium against stand-in pages.
 | Receipts | Apple |
 
 Sites change their pages without notice, so a recipe can break. If one
-does, [open an issue](https://github.com/JasperDale420/statement-sweep/issues/new/choose).
+does, [open an issue](https://github.com/JasperDale19/statement-sweep/issues/new/choose).
 To add a site for yourself, see [Adding a site](#adding-a-site). To add a
 built-in recipe for everyone, see [Contributing a site](#contributing-a-site).
 
@@ -155,7 +155,7 @@ them.
 through adding a site step by step, with starting files for each part. It
 also covers testing and the project's rules. The full recipe contract is in
 [providers/README.md](providers/README.md). If you would rather not write
-code, [open an issue](https://github.com/JasperDale420/statement-sweep/issues/new/choose)
+code, [open an issue](https://github.com/JasperDale19/statement-sweep/issues/new/choose)
 naming the site, and never attach a statement.
 
 ## Develop

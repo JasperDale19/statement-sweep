@@ -120,6 +120,6 @@ the extension deletes everything except the documents you saved.
 
 Changes to this policy are published in this file and visible in its history.
 Questions can be raised at
-<https://github.com/JasperDale420/statement-sweep/issues>.
+<https://github.com/JasperDale19/statement-sweep/issues>.
 
 Statement Sweep is not made or endorsed by any bank or site it works with.
