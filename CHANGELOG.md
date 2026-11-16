@@ -5,6 +5,12 @@ What changed for people using Statement Sweep, newest first. The version is
 
 ## Unreleased
 
+- Settings is shorter and calmer. File naming is two menus and an example:
+  each menu shows what its choices give when opened, the pattern box and
+  its tools appear only for Custom, and rules for one site wait behind
+  "Different names for one site…" unless a site already has its own. The
+  Save bar appears only when there is something to save, empty rows stay
+  hidden, and every explanation is a line or two.
 - Import History says plainly that it can bring in which sites are switched
   off, not only folder and file names, and a fresh copy takes the file's
   settings unless you untick the box. Before, a copy loaded from a new

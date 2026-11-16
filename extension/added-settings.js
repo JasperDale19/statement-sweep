@@ -78,7 +78,7 @@ async function draw() {
   if (!sites.length) {
     const row = document.createElement("div");
     row.className = "row";
-    row.append(Object.assign(document.createElement("p"), { className: "hint empty", textContent: "None yet. To add one, open its statements page and press Add This Site… at the bottom of Statement Sweep's menu." }));
+    row.append(Object.assign(document.createElement("p"), { className: "hint empty", textContent: "None yet. On a site's statements page, press Add This Site… in Statement Sweep's menu." }));
     list.replaceChildren(row);
     return;
   }

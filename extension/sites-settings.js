@@ -43,6 +43,8 @@ async function drawGaps() {
   const n = gapKeys.reduce((sum, k) => sum + (Array.isArray(stored[k]) ? stored[k].length : 0), 0);
   $("gapsCount").textContent = n ? `${n} dismissed` : "None dismissed";
   $("gapsReset").disabled = !n;
+  // Nothing dismissed, nothing to show.
+  $("gapsRow").hidden = !n;
 }
 $("gapsReset").addEventListener("click", async () => {
   await chrome.storage.local.remove(gapKeys);

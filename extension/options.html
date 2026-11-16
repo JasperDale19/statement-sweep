@@ -8,12 +8,22 @@
   body { margin: 0; }
   main { max-width: 640px; margin: 0 auto; padding: 32px 16px 96px; }
   h1 { margin: 0 0 2px; font-size: 22px; line-height: 28px; font-weight: 700; }
-  .lead { margin: 0 0 22px; color: var(--secondary); text-wrap: pretty; }
-  h2 { margin: 22px 4px 6px; font-size: 13px; line-height: 18px; font-weight: 600; }
+  h1 + h2 { margin-top: 18px; }
+  h2 { margin: 26px 4px 6px; font-size: 13px; line-height: 18px; font-weight: 600; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .head h2 { margin-right: 0; }
+  .link { margin: 26px 4px 6px; padding: 0; border: 0; background: none; color: var(--accent-ink); font-size: 12px; line-height: 18px; cursor: default; }
+  .link.below { display: block; margin: 8px 4px 0; }
+  .link:hover { text-decoration: underline; text-underline-offset: 2px; }
   .group { border-radius: var(--radius); background: var(--group); box-shadow: 0 0 0 .5px var(--separator); }
   .row { display: grid; grid-template-columns: 148px 1fr; gap: 6px 16px; align-items: center; padding: 10px 14px; }
   .row + .row { border-top: 1px solid var(--separator); }
+  /* A first row that is hidden leaves no divider above the one after it. */
+  .group > .row:first-child[hidden] + .row { border-top: 0; }
   .row > label { font-size: 13px; }
+  /* A row holding a list starts its label level with the list's first line. */
+  .row:has(> .plan, > #offersSites, > .choice > .pair) { align-items: start; }
+  .row:has(> .plan, > #offersSites, > .choice > .pair) > span:first-child { padding-top: 5px; }
   .row .wide { grid-column: 2; }
   .hint { grid-column: 2; margin: 0; color: var(--secondary); font-size: 12px; line-height: 16px; text-wrap: pretty; }
   input, select { width: 100%; min-height: 28px; padding: 3px 8px; border: 1px solid var(--separator-strong); border-radius: 6px; background: var(--field); color: var(--ink); font: 13px/18px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -34,12 +44,13 @@
   #problem { margin: 0; color: var(--red); font-weight: 500; }
   #problem:empty, #locationProblem:empty { display: none; }
   #locationProblem { margin: 6px 14px 0; color: var(--red); font-size: 12px; line-height: 16px; font-weight: 500; text-wrap: pretty; }
-  .example { display: grid; gap: 4px; padding: 10px 14px; }
-  details { margin-top: 12px; }
+  .example { display: grid; gap: 4px; min-width: 0; }
+  details { margin-top: 10px; }
   summary { padding: 2px 4px; color: var(--accent-ink); cursor: default; width: fit-content; border-radius: 4px; }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 4px 0; font-size: 12px; line-height: 16px; }
   dt { font-family: var(--mono); }
   dd { margin: 0; color: var(--secondary); }
+  .actions[hidden] { display: none; }
   .actions { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; margin: 24px -16px 0; padding: 12px 16px; background: color-mix(in srgb, var(--window) 88%, transparent); backdrop-filter: blur(12px); border-top: 1px solid var(--separator); }
   #historyCount { color: var(--secondary); font-weight: 400; }
   #historyProblem:empty, #historyStatus:empty { display: none; }
@@ -96,7 +107,6 @@
 <body>
 <main>
   <h1>Settings</h1>
-  <p class="lead">Where documents are saved and what they are called. Changes apply to documents saved from now on.</p>
 
   <h2>Location</h2>
   <div class="group">
@@ -126,9 +136,12 @@
 
   <p id="locationProblem" role="alert"></p>
 
-  <h2>Organization</h2>
+  <div class="head">
+    <h2>Organization</h2>
+    <button class="link" id="reset" type="button">Restore Defaults</button>
+  </div>
   <div class="group">
-    <div class="row">
+    <div class="row" id="scopeRow">
       <label for="scope">Applies To</label>
       <select id="scope"></select>
     </div>
@@ -143,7 +156,7 @@
       <input id="file" class="pattern wide" spellcheck="false" autocomplete="off" aria-label="File name pattern">
       <p class="hint" id="filehint"></p>
     </div>
-    <div class="row">
+    <div class="row" id="insertRow">
       <span id="insertLabel">Insert</span>
       <div id="insert" role="group" aria-labelledby="insertLabel">
         <button class="chip" type="button" data-insert="{date}">Date</button>
@@ -154,15 +167,18 @@
         <button class="chip" type="button" data-insert="{title}">Title</button>
       </div>
     </div>
+    <div class="row">
+      <span id="previewhead">Example</span>
+      <div class="example" aria-live="polite">
+        <output id="preview" for="base folder file"></output>
+        <p id="problem" role="alert"></p>
+      </div>
+    </div>
   </div>
 
-  <h2 id="previewhead">Example</h2>
-  <div class="group example" aria-live="polite">
-    <output id="preview" for="base folder file"></output>
-    <p id="problem" role="alert"></p>
-  </div>
+  <button class="link below" id="perSite" type="button">Different names for one site…</button>
 
-  <details>
+  <details id="patternRef">
     <summary>Pattern Reference</summary>
     <dl>
       <dt>{date}</dt><dd>2026-10-28, the document's date</dd>
@@ -180,22 +196,21 @@
     <div class="row">
       <span id="sitesLabel">Include in Sweeps</span>
       <div class="plan" id="sitesList" role="group" aria-labelledby="sitesLabel"></div>
-      <p class="hint">A site switched off here is left out of every sweep and the toolbar count. Each time you open Statement Sweep, the sites that need updating are ticked for you; untick any you want to skip that time.</p>
+      <p class="hint">Switched-off sites are left out of every sync.</p>
     </div>
-    <div class="row">
+    <div class="row" id="gapsRow">
       <span>Dismissed Gaps</span>
       <div class="choice">
         <span id="gapsCount"></span>
         <button class="secondary" id="gapsReset" type="button">Show Them Again</button>
       </div>
-      <p class="hint">A possible gap you dismissed in the popup is not flagged again. A gap somewhere new still is.</p>
+      <p class="hint">Gaps you dismissed in the popup are not flagged again.</p>
     </div>
   </div>
   <p id="sitesStatus" role="status"></p>
 
   <h2 id="addedHead">Sites You Added</h2>
   <div class="group" id="addedList"></div>
-  <p class="note" id="addedNote">Add This Site works only where each statement is a link you can click. Sites that show statements in a viewer, behind a form or a date picker, need a built-in recipe instead.</p>
   <p id="addedStatus" role="status"></p>
 
   <h2 id="offersHead">Card Offers</h2>
@@ -203,7 +218,7 @@
     <div class="row">
       <span id="offersLabel">Add When Syncing</span>
       <div id="offersSites" role="group" aria-labelledby="offersLabel"></div>
-      <p class="hint">Off unless you turn it on. After a site's statements are saved, Statement Sweep opens its card offers in the same tab and presses each offer's own add button, nothing else. It never buys, applies, enrolls or accepts terms.</p>
+      <p class="hint">Off unless you turn it on. After a site's statements are saved, it presses each offer's own add button, nothing else. It never buys, applies, enrolls or accepts terms.</p>
     </div>
     <div class="row">
       <label for="offersCap">Each Sync</label>
@@ -217,7 +232,7 @@
         <a class="secondary" id="openOffers" href="offers.html" target="_blank">Open Card Offers</a>
         <button class="secondary" id="forgetOffers" type="button">Forget Offers…</button>
       </div>
-      <p class="hint">Forgetting clears this list. Offers already on your cards stay on them, and none is pressed twice: each site shows them as added.</p>
+      <p class="hint">Forgetting clears this list. Offers on your cards stay there.</p>
     </div>
   </div>
   <p id="offersStatus" role="status"></p>
@@ -231,7 +246,7 @@
         <span class="pair"><button class="secondary" id="exportHistory" type="button">Export History…</button><button class="secondary" id="importHistory" type="button">Import History…</button></span>
         <input id="historyFile" type="file" accept=".json,application/json" hidden aria-label="History file">
       </div>
-      <p class="hint">Statement Sweep remembers which documents it has saved, so it never saves one twice. Move that record to another copy of Statement Sweep, such as the one from the Chrome Web Store. Your chosen folder does not come along; choose it again there.</p>
+      <p class="hint">What has been saved, so nothing is saved twice. Bring it to another copy of Statement Sweep; choose your folder again there.</p>
     </div>
     <div class="row">
       <span>Run Logs</span>
@@ -239,7 +254,7 @@
         <span id="logsCount"></span>
         <button class="secondary" id="exportLogs" type="button">Export Logs…</button>
       </div>
-      <p class="hint">What each site did in a sweep, and why it stopped, for fixing a site that does not save. With a folder chosen, each run's log is in a Logs folder beside each site's documents. Without one, the latest lines are kept in Chrome, and Export Logs saves them as one text file. Logs never leave your computer, and long numbers in them show only their last 4 digits.</p>
+      <p class="hint">What each site did, for fixing one that does not save. Long numbers show only their last 4 digits.</p>
     </div>
     <div class="row" id="importRow" hidden>
       <span id="importHead">From the File</span>
@@ -261,9 +276,8 @@
   <p id="historyProblem" role="alert"></p>
   <p id="historyStatus" role="status"></p>
 
-  <div class="actions">
+  <div class="actions" id="actions" hidden>
     <span id="status" role="status"></span>
-    <button class="secondary" id="reset" type="button">Restore Defaults</button>
     <button class="primary" id="save" type="button">Save</button>
   </div>
 </main>

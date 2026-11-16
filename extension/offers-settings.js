@@ -16,7 +16,7 @@ const KIND = { personal: "personal cards", business: "business cards" };
 
 // The pace, from the numbers the engine keeps to, so the two never differ.
 const pace = $("offersPace");
-if (pace) pace.textContent = `A site's first sync adds every offer it has, which can be hundreds and take a while: about 15 minutes for 300. Later syncs add only new ones. ${seconds(PACE_MS[0])} to ${seconds(PACE_MS[1])} seconds apart, soonest to expire first, and never more than ${MAX_PRESSES} a sync. It stops at once if a site signs you out, asks you to confirm something, or says to slow down.`;
+if (pace) pace.textContent = `The first sync adds every offer, about 15 minutes for 300; later ones add only new offers. ${seconds(PACE_MS[0])} to ${seconds(PACE_MS[1])} seconds apart, at most ${MAX_PRESSES} a sync, stopping if a site signs you out, asks you to confirm something, or says to slow down.`;
 
 const choiceWords = (n) => (n === ALL ? "Every new offer" : `Up to ${n} offers a site`);
 const cap = $("offersCap");
