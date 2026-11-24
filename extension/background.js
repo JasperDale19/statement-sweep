@@ -739,8 +739,9 @@ async function saveOne(tabId, provider, doc, destination) {
     if (destination) {
       try {
         const bytes = Uint8Array.from(atob(pdf.base64), (c) => c.charCodeAt(0));
-        const path = await writeFile(destination, withinChosen(destination.name, filename), new Blob([bytes], { type: "application/pdf" }));
-        return { ok: true, bytes: size, inFolder: path };
+        const payload = new Blob([bytes], { type: "application/pdf" });
+        const path = await writeFile(destination, withinChosen(destination.name, filename), payload);
+        return { ok: true, bytes: size, inFolder: path, payload };
       } catch (e) {
         logs.error(provider, "writing to the chosen folder", e);
         return { ok: await saveBase64(pdf.base64, filename), bytes: size, note: "Some documents were saved in Downloads because your chosen folder could not be written." };
@@ -767,9 +768,14 @@ async function saveOne(tabId, provider, doc, destination) {
     }
     if (!destination || !landed.ok) return landed;
     // The original is removed only once the copy is confirmed whole.
-    let moved;
+    let moved, payload;
     try {
-      moved = await moveFromInbox(await getFolder("inbox"), stageName, destination, withinChosen(destination.name, filename));
+      const inbox = await getFolder("inbox");
+      // The download's own bytes, kept for its history entry (factsOf).
+      // Read now: the staged file is taken out of Downloads once moved.
+      const staged = await (await inbox.getFileHandle(stageName)).getFile();
+      payload = new Blob([await staged.arrayBuffer()], { type: "application/pdf" });
+      moved = await moveFromInbox(inbox, stageName, destination, withinChosen(destination.name, filename));
     } catch (e) {
       logs.error(provider, "moving a download from the inbox", e);
       // Not a PDF by its bytes: not saved, so it is fetched again next time,
@@ -783,7 +789,7 @@ async function saveOne(tabId, provider, doc, destination) {
     }
     await chrome.downloads.removeFile(landed.id).catch(() => {});
     await chrome.downloads.erase({ id: landed.id }).catch(() => {});
-    return { ...landed, inFolder: moved };
+    return { ...landed, inFolder: moved, payload };
   }
   return { ok: false, why: "This document has no way to be saved yet." };
 }
@@ -941,6 +947,7 @@ function bounded(provider, docs) {
 async function sweep(provider, together = false, entry = { destination: null, saved: [] }) {
   const destination = await getFolder("destination");
   entry.destination = destination || null;
+  const sharing = Boolean(destination) && (await sharingOn());
   const key = `seen:${provider.id}`;
   const record = (await chrome.storage.local.get(key))[key];
   const seen = new Set(record || []);
@@ -1112,10 +1119,10 @@ async function sweep(provider, together = false, entry = { destination: null, sa
       // sweep is kept rather than written over by the list read at its start.
       for (const id of (await chrome.storage.local.get(key))[key] || []) seen.add(id);
       await chrome.storage.local.set({ [key]: [...seen] });
-      if (result.inFolder) {
-        // Its size and SHA-256, for other computers to check it by. One that
-        // cannot be read back is left out of the entry: they save it again.
-        const facts = await factsOf(destination, result.inFolder).catch((e) => {
+      if (result.inFolder && sharing) {
+        // Its size and SHA-256, from the bytes saved, for other computers to
+        // check it by. One left out of the entry is saved again by them.
+        const facts = await factsOf(result.inFolder, result.payload).catch((e) => {
           note(provider, `Document ${doc.id} is not listed for other computers: ${errorText(e)}`, "WARN");
           return null;
         });

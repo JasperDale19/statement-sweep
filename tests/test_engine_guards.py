@@ -213,6 +213,20 @@ def test_a_document_another_copy_saved_into_the_folder_is_not_saved_again(engine
     assert "History entry written: 1 document(s)" in site
 
 
+def test_an_entry_lists_the_bytes_this_copy_saved_at_the_name_it_got(engine):
+    # Another file already has the name, so this one is saved beside it.
+    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28")]}, shared={F1: "%PDF-1.4 someone else's\n%%EOF"})
+    beside = "Statement Sweep/Fake Bank/2026-09-28 Fake Statement (1).pdf"
+    assert "Chosen/" + beside in pdfs
+    assert [e["files"] for e in entries(got).values()] == [{"fake": {"f1": facts(beside)}}]
+
+
+def test_a_document_saved_through_downloads_is_listed_with_its_own_bytes(engine):
+    got, _, pdfs = sweep(engine, {"docs": [doc("c1", "click")], "clickBody": PDF})
+    assert got["board"]["fake"]["text"] == "1 new."
+    assert [e["files"] for e in entries(got).values()] == [{"fake": {"c1": facts("Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf")}}]
+
+
 def test_a_document_another_copy_claims_but_whose_file_is_not_here_is_saved(engine):
     # Its entry synced down before its PDF did, or the PDF never uploaded.
     got, _, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")]}, shared={"theirs.json": other_copy(["f1"])})

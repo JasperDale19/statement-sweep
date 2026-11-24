@@ -45,10 +45,12 @@ async function fileAt(root, path) {
 const hex = (buffer) => [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, "0")).join("");
 const sha256 = async (file) => hex(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()));
 
-// Where a saved document is, in the folder `root`, its size and SHA-256.
-export async function factsOf(root, path) {
-  const file = await fileAt(root, path);
-  return { path, size: file.size, sha256: await sha256(file) };
+// What other copies check a saved document by: where it was saved in the
+// folder, and the size and SHA-256 of the bytes this copy saved there, taken
+// from those bytes rather than read back, so a file another save put at the
+// same path at the same moment cannot be taken for it.
+export async function factsOf(path, blob) {
+  return { path, size: blob.size, sha256: await sha256(blob) };
 }
 
 async function readFile(handle) {

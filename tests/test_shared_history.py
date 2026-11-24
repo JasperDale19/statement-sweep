@@ -234,8 +234,10 @@ def test_an_entry_reads_back_as_a_history_file(tab):
     assert back["ok"] is True and back["sites"] == {"amex": ["a1"]} and back["files"] == {"amex": {"a1": facts(PATH_A, PDF_A)}}
 
 
-def test_facts_of_a_saved_file_are_its_path_size_and_sha256(tab):
-    got = run(tab, with_pdfs({PATH_A: PDF_A}, f"async (s, root) => s.factsOf(root, {json.dumps(PATH_A)})"))
+def test_facts_of_a_saved_file_are_its_path_and_the_size_and_sha256_of_its_bytes(tab):
+    # Taken from the bytes saved, not from whatever is at the path now.
+    call = with_pdfs({PATH_A: PDF_B}, f"async (s, root) => s.factsOf({json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}]))")
+    got = run(tab, call)
     assert got["result"] == facts(PATH_A, PDF_A)
 
 
@@ -268,7 +270,7 @@ def test_more_documents_than_an_entry_can_hold_is_refused(tab):
 
 
 def test_an_entry_written_here_is_found_by_another_copy_using_the_same_folder(tab):
-    mine = run(tab, with_pdfs({PATH_A: PDF_A}, f"""async (s, root) => s.writeEntry(root, 'amex', [{{ id: 'o1', facts: await s.factsOf(root, {json.dumps(PATH_A)}) }}])"""), STORE)
+    mine = run(tab, with_pdfs({PATH_A: PDF_A}, f"""async (s, root) => s.writeEntry(root, 'amex', [{{ id: 'o1', facts: await s.factsOf({json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}])) }}])"""), STORE)
     got = run(tab, with_pdfs({PATH_A: PDF_A}, CHECK), {"seen:amex": ["z9"]}, mine["files"])
     assert got["result"] == ["o1"] and got["store"]["seen:amex"] == ["z9"]
 
