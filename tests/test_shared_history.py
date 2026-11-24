@@ -358,3 +358,19 @@ def test_two_documents_saved_at_once_under_one_name_both_survive(tab):
     got = run(tab, call)
     assert len(set(got["result"]["names"])) == 2, got["result"]["names"]
     assert sorted(got["result"]["texts"]) == sorted([PDF_A, PDF_A[:-3] + "xyz"])
+
+
+def test_a_folder_that_never_answers_does_not_hold_up_later_saves(tab):
+    call = f"""async (s, root) => {{
+      const f = await import('/folders.js');
+      // Thirty seconds become 50 ms here.
+      const real = window.setTimeout;
+      window.setTimeout = (fn, ms, ...rest) => real(fn, ms === 30000 ? 50 : ms, ...rest);
+      const stuck = {{ getFileHandle: () => new Promise(() => {{}}), getDirectoryHandle: () => new Promise(() => {{}}) }};
+      const first = f.writeFile(stuck, 'x.pdf', new Blob(['%PDF-'])).then(() => 'saved', (e) => e.message);
+      const second = await f.writeFile(root, {json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}]));
+      window.setTimeout = real;
+      return [await first, second];
+    }}"""
+    got = run(tab, call)
+    assert got["result"] == ["The chosen folder did not answer within 30 seconds.", PATH_A]

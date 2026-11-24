@@ -66,9 +66,15 @@ async function freeName(dir, name) {
 // (`claim`): two documents saved at once under one name would otherwise both
 // find it free, and the second would be written over the first. The file is
 // made empty in that step, so the name is taken before the slow write starts.
+// A folder that does not answer is given CLAIM_WAIT_MS, then the save fails
+// and the next one goes on: a save given up on never writes.
+const CLAIM_WAIT_MS = 30000;
 let claims = Promise.resolve();
 function claim(work) {
-  const next = claims.then(work);
+  const next = claims.then(() => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("The chosen folder did not answer within 30 seconds.")), CLAIM_WAIT_MS);
+    work().then(resolve, reject).finally(() => clearTimeout(timer));
+  }));
   claims = next.catch(() => {});
   return next;
 }
