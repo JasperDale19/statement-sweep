@@ -15,8 +15,10 @@
   const CARD_WAIT_MS = 15000;
   const SWITCHER_WAIT_MS = 5000;
   const MORE_PRESSES = 30;
-  const ADD = ["Add to Card"];
-  const ADDED = /^(added|added to card|offer added)$/i;
+  // Since 2026-11 each offer's add control is a "+" icon whose only name is
+  // its title, "add to list card".
+  const ADD = ["Add to Card", "Add to List Card"];
+  const ADDED = /^(added|added to card|added to list card|offer added)$/i;
   const OFFERS_LINK = /^(amex offers|offers|amex offers & benefits|offers & benefits|offers and benefits|view all offers|see all offers)$/i;
   const AVAILABLE_TAB = /^(available|available offers|eligible|eligible offers)(\s*\(\d+\))?$/i;
   const ADDED_TAB = /^added(?: to card)?\s*\(?\s*(\d+)\s*\)?$/i;
@@ -33,7 +35,6 @@
   const NUMBER = byTest("=", "simple_switcher_display_number");
   const SELECTED = byTest("=", "simple_switcher_selected_option_display");
   const NAME = byTest("=", "simple_switcher_display_name");
-  const HOW_TO_GET_THERE = "Open Offers in this tab and sync again.";
 
   const onAmex = () => location.hostname.endsWith("americanexpress.com");
   const onOffers = () => location.pathname.startsWith("/offers");
@@ -136,7 +137,10 @@
     const step = (a) => `offers link:${K.nameOf(a).toLowerCase()}`;
     const link = offersLinks().find((a) => !w.pressed.has(step(a)));
     if (link && press(link, step(link))) return { state: "walking" };
-    if (Date.now() - w.at > WALK_WAIT_MS) return { state: "stopped", why: `Amex's link to its offers did not lead there. ${HOW_TO_GET_THERE}` };
+    // No link of Amex's own is left to press: not the offers page, so the
+    // engine loads the meta's offers url instead. After a press, the page
+    // is given WALK_WAIT_MS to move first.
+    if (!w.pressed.size || Date.now() - w.at > WALK_WAIT_MS) return { state: "no_list" };
     return { state: "walking" };
   }
 

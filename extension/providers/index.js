@@ -24,7 +24,8 @@ export const PROVIDERS = [
     "fileName": "{date} American Express {title}.pdf",
     "family": "click",
     "offers": {
-      "file": "providers/amex.offers.js"
+      "file": "providers/amex.offers.js",
+      "url": "https://global.americanexpress.com/offers/eligible"
     },
     "downloadWaitSeconds": 90,
     "postsAfterDays": 1

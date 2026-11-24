@@ -199,11 +199,28 @@ def test_from_statements_the_offers_link_is_pressed_once(tab):
 
 def test_a_link_to_another_host_is_not_pressed(tab):
     load(tab, STATEMENTS, "<a href='https://example.com/offers'>Offers</a>" + SCRIPT)
-    assert read(tab)["state"] == "walking"
+    assert read(tab) == {"state": "no_list"}
     assert tab.evaluate("pressed") == []
+
+
+def test_with_no_offers_link_it_is_no_list_so_the_engine_loads_the_url(tab):
+    load(tab, STATEMENTS, "<a href='/activity'>Activity</a><a href='/benefits'>Card Benefits</a>" + SCRIPT)
+    assert read(tab) == {"state": "no_list"}
+    assert tab.evaluate("pressed") == []
+
+
+def test_a_press_that_does_not_move_ends_as_no_list(tab):
+    load(tab, STATEMENTS, page(""))
+    assert read(tab) == {"state": "walking"}
     tab.wait_for_timeout(350)
-    got = read(tab)
-    assert got["state"] == "stopped" and "Open Offers" in got["why"]
+    assert read(tab) == {"state": "no_list"}
+    assert tab.evaluate("pressed") == ["Offers"]
+
+
+def test_the_meta_gives_amex_offers_page_on_its_own_host():
+    import json
+    meta = json.loads((ROOT / "providers" / "amex.meta.json").read_text())
+    assert meta["offers"]["url"] == OFFERS
 
 
 def test_without_walking_another_page_is_no_list(tab):
@@ -266,3 +283,56 @@ def test_the_cards_own_name_is_read_from_the_switcher_for_the_card_offers_page(t
 def test_without_a_switcher_there_is_no_card_name(tab):
     load(tab, OFFERS, page(tile("Example Coffee", "Earn $5 back"), cards=""))
     assert "cardName" not in read(tab)
+
+
+# Amex's list since 2026-11: each offer's add control is a "+" icon button
+# whose only name is its title, and pressing it takes the offer off the list.
+def icon_tile(merchant, words, title="add to list card", expires="12/31/26"):
+    return (f'<div><div><div data-testid="overflowTextContainer"><h3><span>{merchant}</span></h3></div>'
+            f'<span data-testid="overflowTextContainer">{words}</span><p>Expires {expires}</p>'
+            f'<button type="button" data-testid="merchantOfferTermsLink">Terms apply</button>'
+            f'<button type="button" data-testid="merchantOfferDetailsLink">View Details</button></div>'
+            f'<div><button type="button" data-testid="merchantOfferListAddButton" title="{title}">'
+            f'<span class="sr"></span><svg aria-hidden="true" width="16" height="16"><path d="M0 0h16v16H0z"/></svg></button></div></div>')
+
+
+ICON_SCRIPT = """<script>
+window.pressed = [];
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('button');
+  if (!el) return;
+  pressed.push(el.getAttribute('title') || el.textContent.trim());
+  if (el.getAttribute('title') === 'add to list card') setTimeout(() => el.closest('[data-row]').remove(), 80);
+});
+</script>"""
+
+
+def icon_page(*tiles):
+    rows = "".join(f"<div data-row>{t}</div>" for t in tiles)
+    return f"{switcher('11111')}<main id='list'><div data-testid='listViewContainer'>{rows}</div></main>{ICON_SCRIPT}"
+
+
+def test_icon_add_buttons_named_by_their_title_are_offers(tab):
+    load(tab, OFFERS, icon_page(icon_tile("Example Coffee", "Earn 10% back, up to $15"),
+                                icon_tile("Invented Books", "Spend $50, earn $10 back", expires="1/4/27")))
+    got = read(tab)
+    assert got["state"] == "ok" and len(got["offers"]) == 2
+    first = got["offers"][0]
+    assert first["merchant"] == "Example Coffee" and first["title"] == "Earn 10% back, up to $15"
+    assert first["expires"] == "2026-12-31" and first["added"] is False
+    assert tab.evaluate("pressed") == []
+
+
+def test_an_icon_add_presses_only_that_offer_and_its_leaving_is_added(tab):
+    load(tab, OFFERS, icon_page(icon_tile("Example Coffee", "Earn 10% back, up to $15"),
+                                icon_tile("Invented Books", "Spend $50, earn $10 back")))
+    offer = read(tab)["offers"][1]
+    assert add(tab, offer) == {"ok": True}
+    assert tab.evaluate("pressed") == ["add to list card"]
+    assert [o["merchant"] for o in read(tab)["offers"]] == ["Example Coffee"]
+
+
+def test_an_icon_with_another_title_is_not_pressed(tab):
+    load(tab, OFFERS, icon_page(icon_tile("Example Coffee", "Earn 10% back", title="remove from list card")))
+    got = read(tab)
+    assert got["state"] == "stopped" and tab.evaluate("pressed") == []
