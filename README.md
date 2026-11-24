@@ -37,14 +37,14 @@ nothing anywhere.
 
 ## Sites
 
-27 sites are switched on. Each is a recipe in `extension/providers/`, tested in a real
+28 sites are switched on. Each is a recipe in `extension/providers/`, tested in a real
 Chromium against stand-in pages.
 
 | Kind | Sites |
 |---|---|
 | Cards | American Express, Apple Card, Bilt Card, Chase, Chase Business |
 | Banks | First Horizon Bank, Simmons Bank, Optum Bank (HSA) |
-| Investing | Alpaca, Coinbase, Fidelity, Fidelity NetBenefits, Interactive Brokers, Robinhood, Wealthfront, TreasuryDirect |
+| Investing | Alpaca, Charles Schwab, Coinbase, Fidelity, Fidelity NetBenefits, Interactive Brokers, Robinhood, Wealthfront, TreasuryDirect |
 | Payments | PayPal, Venmo |
 | Bills and loans | Nelnet, SDG&E, Spectrum |
 | Insurance and government | State Farm, IRS, Shelby County Trustee |

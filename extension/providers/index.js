@@ -267,6 +267,19 @@ export const PROVIDERS = [
     "postsAfterDays": 5
   },
   {
+    "id": "schwab",
+    "name": "Charles Schwab",
+    "match": [
+      "https://client.schwab.com/*",
+      "https://ausgateway.schwab.com/*"
+    ],
+    "listUrl": "https://client.schwab.com/retail/accounts/statements/",
+    "pageFile": "providers/schwab.page.js",
+    "fileName": "{date} Charles Schwab {title}.pdf",
+    "family": "fetch",
+    "postsAfterDays": 5
+  },
+  {
     "id": "sdge",
     "name": "SDG&E",
     "match": [
