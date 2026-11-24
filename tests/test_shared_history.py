@@ -342,3 +342,19 @@ def test_an_engine_that_does_not_answer_leaves_the_page_quiet(stab):
     choose(stab, "Shared")
     stab.wait_for_timeout(200)
     assert stab.inner_text("#historyProblem") == "" and stab.inner_text("#locationProblem") == ""
+
+
+# -- saving two documents at once under one name -------------------------------------
+
+def test_two_documents_saved_at_once_under_one_name_both_survive(tab):
+    # Different PDFs of the same size, saved at the same moment to the same path.
+    call = f"""async (s, root) => {{
+      const f = await import('/folders.js');
+      const path = {json.dumps(PATH_A)};
+      const names = await Promise.all([f.writeFile(root, path, new Blob([{json.dumps(PDF_A)}])), f.writeFile(root, path, new Blob([{json.dumps(PDF_A[:-3] + "xyz")}]))]);
+      const read = async (p) => {{ const parts = p.split('/'); const n = parts.pop(); let d = root; for (const x of parts) d = await d.getDirectoryHandle(x); return (await (await d.getFileHandle(n)).getFile()).text(); }};
+      return {{ names, texts: await Promise.all(names.map(read)) }};
+    }}"""
+    got = run(tab, call)
+    assert len(set(got["result"]["names"])) == 2, got["result"]["names"]
+    assert sorted(got["result"]["texts"]) == sorted([PDF_A, PDF_A[:-3] + "xyz"])

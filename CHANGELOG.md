@@ -5,6 +5,9 @@ What changed for people using Statement Sweep, newest first. The version is
 
 ## Unreleased
 
+- Two documents saved at the same moment under the same file name are
+  both kept: the second gets a name of its own instead of being written
+  over the first.
 - Copies of Statement Sweep on different computers can share one folder,
   such as one in iCloud Drive or Google Drive, without saving the same
   document twice. Each site that saves documents into the folder adds a

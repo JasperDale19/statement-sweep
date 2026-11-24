@@ -61,13 +61,27 @@ async function freeName(dir, name) {
 // and only returns once what landed is as long as what was sent. `replace`
 // writes over the file of that name instead: only a run's own log (log.js),
 // which is written again as the run goes, ever asks for it.
+//
+// Choosing a free name and making the file are one step, taken one at a time
+// (`claim`): two documents saved at once under one name would otherwise both
+// find it free, and the second would be written over the first. The file is
+// made empty in that step, so the name is taken before the slow write starts.
+let claims = Promise.resolve();
+function claim(work) {
+  const next = claims.then(work);
+  claims = next.catch(() => {});
+  return next;
+}
+
 export async function writeFile(root, path, blob, { replace = false } = {}) {
   const parts = path.split("/");
   const fileName = parts.pop();
   let dir = root;
   for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
-  const name = replace ? fileName : await freeName(dir, fileName);
-  const handle = await dir.getFileHandle(name, { create: true });
+  const [name, handle] = await claim(async () => {
+    const chosen = replace ? fileName : await freeName(dir, fileName);
+    return [chosen, await dir.getFileHandle(chosen, { create: true })];
+  });
   const out = await handle.createWritable();
   await out.write(blob);
   await out.close();
