@@ -3,6 +3,7 @@ import { DEFAULT_NAMING, checkPattern, normalise, pathFor } from "./naming.js";
 import { INBOX, forgetFolders, getFolder, setFolder, withinChosen } from "./folders.js";
 import { MAX_FILE_BYTES, exportHistory, fileNameFor, importHistory, planImport, readHistory, recordedCounts } from "./history.js";
 import { STORED_PREFIX, storedText } from "./log.js";
+import { SHARED_DIR, SHARING_OFF, forgetShared } from "./shared-history.js";
 
 // The sites you added have their own file name patterns too.
 await loadSites();
@@ -102,6 +103,7 @@ function drawLocation() {
   $("chooseDest").textContent = destination ? "Change…" : "Choose Folder…";
   $("desthint").textContent = destination ? "" : "Or choose another folder, such as a new one inside Documents.";
   $("inboxRow").hidden = !destination;
+  $("shareRow").hidden = !destination;
   $("inboxState").textContent = inbox ? "Allowed" : "Not Allowed Yet";
   $("inboxState").dataset.kind = inbox ? "" : "needed";
   $("allowInbox").textContent = inbox ? "Choose Again…" : "Allow Access…";
@@ -137,11 +139,32 @@ $("chooseDest").addEventListener("click", async () => {
   locationProblem("");
   const handle = await pickFolder({ id: "sweep-destination", startIn: "documents" });
   if (!handle) return;
+  // What was saved into the last folder is not in a different one.
+  const same = destination ? await destination.isSameEntry(handle).catch(() => false) : false;
+  if (!same) await forgetShared();
   await setFolder("destination", handle);
   destination = handle;
   await makeInbox();
   drawLocation();
   drawPreview();
+  await shareNow();
+});
+
+// Takes in now what other copies saved into the chosen folder (the engine
+// does it, background.js), so what is due is right before the first run. An
+// engine that does not answer, or is mid-run, leaves it for the run to do.
+async function shareNow() {
+  let r;
+  try { r = await chrome.runtime.sendMessage({ type: "syncHistory" }); } catch (e) { return; }
+  if (!r || r.none || r.off || r.busy) return;
+  const problems = (r.problems || []).map((p) => (p.name ? `${p.name} in ${SHARED_DIR} was not used: ${p.problem}` : p.problem));
+  const learned = r.imported ? `Learned ${plural(r.imported, "document")} saved into this folder by another copy of Statement Sweep.` : "";
+  historyMessage(problems.join(" "), learned);
+  await drawHistory();
+}
+
+$("shareHistory").addEventListener("change", async () => {
+  await chrome.storage.local.set({ [SHARING_OFF]: !$("shareHistory").checked });
 });
 
 $("allowInbox").addEventListener("click", async () => {
@@ -159,6 +182,7 @@ $("allowInbox").addEventListener("click", async () => {
 
 $("useDownloads").addEventListener("click", async () => {
   locationProblem("");
+  await forgetShared();
   await forgetFolders();
   destination = null;
   inbox = null;
@@ -473,6 +497,7 @@ $("importConfirm").addEventListener("click", async () => {
 
 $("scope").replaceChildren(new Option("All Sites", ""), ...PROVIDERS.map((p) => new Option(p.name, p.id)));
 $("base").value = draft.base;
+$("shareHistory").checked = (await chrome.storage.local.get(SHARING_OFF))[SHARING_OFF] !== true;
 drawLocation();
 drawFields();
 drawHistory();

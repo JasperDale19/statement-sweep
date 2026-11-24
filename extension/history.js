@@ -13,6 +13,9 @@
 // from `dates:<site id>` and `tax:<site id>`, so the other copy knows what is
 // due (cadence.js) from the first day.
 //
+// The same format is written to, and read from, the chosen folder for other
+// copies using that folder (shared-history.js).
+//
 // An import only ever adds. Nothing already recorded is removed, so a file
 // from an older copy can never make a document be saved twice.
 import { PROVIDERS } from "./providers/index.js";

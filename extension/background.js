@@ -12,6 +12,7 @@ import { backfillFor, documentDate, isDue, isTaxDocument, keysFor, localIso, sta
 import { amount, cleanUrl, errorText, makeLogs } from "./log.js";
 import { OFFERS_WAIT, hasOffers, makeOffers, offersWanted, offersWords } from "./offers.js";
 import { addFound, estimateNew, foundKey, foundOf, siteProgress } from "./progress.js";
+import { noteShared, syncShared } from "./shared-history.js";
 
 // The run's logs (log.js): what each site did and why it stopped, written to
 // each site's Logs folder as the run goes. `note` adds one line for a site.
@@ -66,6 +67,39 @@ function within(ms, why, work, stoppable = false) {
     stopWakes.delete(wake);
   });
 }
+// The record shared through your chosen folder (shared-history.js): read
+// before a run and written after it, never while a site is saving, so what
+// another computer saved there is not saved again. A folder that does not
+// answer (a cloud file still downloading, say) is given SYNC_WAIT_MS, and the
+// run goes on without it. A sync given up on never writes its record late.
+const SYNC_WAIT_MS = 30 * 1000;
+let syncGen = 0;
+// A sync Settings asked for, which a run waits for before it starts.
+let syncing = Promise.resolve();
+const files = (n) => `${n} other ${n === 1 ? "copy's file" : "copies' files"}`;
+async function syncHistory(when) {
+  const destination = await getFolder("destination");
+  if (!destination) return null;
+  if (!(await isGranted(destination))) {
+    logs.runLine(`History not shared ${when}: your chosen folder needs permission again.`, "WARN");
+    return { problems: [{ name: "", problem: "Your chosen folder needs permission again." }], read: [], imported: 0, wrote: false };
+  }
+  const gen = ++syncGen;
+  try {
+    const r = await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", () => syncShared(destination, { stillWanted: () => gen === syncGen }));
+    if (r.off) return r;
+    logs.runLine(`History ${when}: ${files(r.read.length)} read, ${r.imported} document${r.imported === 1 ? "" : "s"} learned${r.wrote ? ", this copy's file written" : ""}.`);
+    for (const p of r.problems) logs.runLine(`History file ${p.name} not used: ${p.problem}`, "WARN");
+    if (r.unknown.length) logs.runLine(`History files name ${r.unknown.length} site(s) this copy does not have; they are left in their files.`);
+    return r;
+  } catch (e) {
+    // Given up on: a late answer from this sync must not write.
+    if (gen === syncGen) syncGen += 1;
+    logs.runLine(`History not shared ${when}: ${errorText(e)}`, "WARN");
+    return { problems: [{ name: "", problem: errorText(e) }], read: [], imported: 0, wrote: false };
+  }
+}
+
 const minutes = (ms) => `${amount(ms / 60000)} minute${ms === 60000 ? "" : "s"}`;
 // The tab each site is sweeping in, so its line on the board can say which
 // tab to show you.
@@ -1005,6 +1039,7 @@ async function sweep(provider, together = false) {
       // A click whose download Chrome may hold waits HELD_WAIT_MS for it
       // (nextDownload), so its save is given that and a page call's time more.
       const saveWait = doc.method === "click" && downloadsInTab.get(tab.id) ? HELD_WAIT_MS + PAGE_WAIT_MS : SAVE_WAIT_MS;
+      const intoFolder = Boolean(await getFolder("destination"));
       const result = await timed(provider, "save", () => within(saveWait, `The save did not finish within ${minutes(saveWait)}.`, () => saveOne(tab.id, provider, doc)))
         .catch((e) => {
           logs.error(provider, `saving ${doc.id}`, e);
@@ -1035,6 +1070,7 @@ async function sweep(provider, together = false) {
       // sweep is kept rather than written over by the list read at its start.
       for (const id of (await chrome.storage.local.get(key))[key] || []) seen.add(id);
       await chrome.storage.local.set({ [key]: [...seen] });
+      if (intoFolder) await noteShared(provider.id, [doc.id]);
       await remember(provider, [doc], true);
       count += 1;
       logs.counted(provider, "saved");
@@ -1317,7 +1353,9 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   (async () => {
     const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20000);
     try {
+      await syncing;
       await loadSites();
+      await syncHistory("before the run");
       const { off = [] } = await chrome.storage.local.get("off");
       await whyChosen(message, off).catch((e) => logs.runLine(`Could not say why each site was chosen: ${errorText(e)}`, "WARN"));
       // Get New Documents names the sites that need running (popup.js,
@@ -1356,6 +1394,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     } catch (e) {
       logs.runLine(`The run failed: ${errorText(e)}`, "ERROR");
     } finally {
+      await syncHistory("after the run");
       await clearDownloadGrant();
       clearInterval(keepAlive);
       await logs.finish();
@@ -1365,6 +1404,25 @@ chrome.runtime.onMessage.addListener((message, sender) => {
       chrome.runtime.sendMessage({ type: "board" }).catch(() => {});
     }
   })();
+});
+
+// Settings chose a folder: what other copies saved there is taken in now, so
+// the popup knows what is due before the first run. Heard only from this
+// extension's own pages; not while a run goes, which syncs at its own end.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== "syncHistory" || !fromOwnPage(sender)) return;
+  const answer = (o) => { try { sendResponse(o); } catch (e) { /* the page closed */ } };
+  if (running) {
+    answer({ busy: true });
+    return;
+  }
+  const work = syncHistory("on choosing the folder");
+  syncing = work.catch(() => {});
+  work.then(async (r) => {
+    answer(r || { none: true });
+    await checkDue();
+  }, () => answer({ none: true }));
+  return true;
 });
 
 // Add This Site: the picker (picker.js) sends the pattern it learned from the
