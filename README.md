@@ -95,11 +95,14 @@ off and turns on card offers.
 
 **Using more than one computer.** Choose the same synced folder (in iCloud
 Drive or Google Drive, say) in Statement Sweep on each computer. Each site
-that saves documents into it adds a small file listing them to that
-folder's `Statement Sweep History` folder, and every computer reads those
-files before each sync, so a statement one computer saved is not saved
-again by another. Documents saved before the folder was chosen are not
-listed, so the first sync into it saves them there. Sites you added with Add
+that saves documents into it adds a small file listing them, with where each
+was saved and a fingerprint of it, to that folder's `Statement Sweep History`
+folder. Before saving a statement, a computer skips it only if another
+listed it and that very file is in the folder. A statement that has not
+synced down yet is saved, so at worst one is saved twice, never missed.
+Documents saved before the folder was chosen are not listed, so the first
+sync into it saves them there. A site another computer has just synced may
+still be shown as due here; syncing it saves nothing new. Sites you added with Add
 This Site are not shared. **History File** in Settings turns this off.
 
 ## Card offers

@@ -5,6 +5,7 @@ on and the run still ends, Stop cuts a list read short, a list is kept
 within bounds, a document's id is logged without its query, a run is asked
 for only from the extension's own pages, and Add Site leaves a built-in
 site's host alone. Every number, address and account here is invented."""
+import hashlib
 import json
 import re
 import pytest
@@ -80,10 +81,14 @@ START = """async ({ plan, local, shrink, stopWhen, sender, shared }) => {
     let dir = chosen;
     for (const part of path.split('/')) dir = await dir.getDirectoryHandle(part, { create: true });
   }
-  // Other copies' history files, already in the chosen folder.
+  // Other copies' history files, already in the chosen folder, and any
+  // file named by a path, such as a document another copy saved.
   for (const [name, text] of Object.entries(shared || {})) {
-    const dir = await chosen.getDirectoryHandle('Statement Sweep History', { create: true });
-    const w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+    const parts = (name.includes('/') ? name : 'Statement Sweep History/' + name).split('/');
+    const leaf = parts.pop();
+    let dir = chosen;
+    for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
+    const w = await (await dir.getFileHandle(leaf, { create: true })).createWritable();
     await w.write(text); await w.close();
   }
   await import('/background.js');
@@ -170,9 +175,17 @@ def test_a_download_that_is_a_pdf_is_still_moved_and_marked_seen(engine):
 HIST = "Chosen/Statement Sweep History/"
 
 
-def other_copy(ids):
+F1 = "Statement Sweep/Fake Bank/2026-09-28 Fake Statement.pdf"
+
+
+def facts(path, text=PDF):
+    return {"path": path, "size": len(text.encode()), "sha256": hashlib.sha256(text.encode()).hexdigest()}
+
+
+def other_copy(ids, path=F1):
     return json.dumps({"format": "statement-sweep-history", "version": 1, "sites": {"fake": ids},
-                       "dates": {"fake": {i: "2026-09-28" for i in ids}}})
+                       "dates": {"fake": {i: "2026-09-28" for i in ids}},
+                       "files": {"fake": {i: facts(path) for i in ids}}})
 
 
 def entries(got):
@@ -184,15 +197,35 @@ def summary_of(got):
 
 
 def test_a_document_another_copy_saved_into_the_folder_is_not_saved_again(engine):
-    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")]}, shared={"theirs.json": other_copy(["f1"])})
+    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")]},
+                            shared={"theirs.json": other_copy(["f1"]), F1: PDF})
     assert got["board"]["fake"]["text"] == "1 new.", got["board"]
-    assert pdfs == ["Chosen/Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"]
-    assert sorted(got["local"]["seen:fake"]) == ["f1", "f2"]
-    # A new entry, holding only what this run saved into the folder.
-    assert [e["sites"] for e in entries(got).values()] == [{"fake": ["f2"]}]
+    assert sorted(pdfs) == ["Chosen/" + F1, "Chosen/Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"]
+    # Only what this copy saved is in its own record.
+    assert got["local"]["seen:fake"] == ["f2"]
+    # A new entry, holding only what this run saved into the folder, and how to check it.
+    made = list(entries(got).values())
+    assert [e["sites"] for e in made] == [{"fake": ["f2"]}]
+    assert made[0]["files"] == {"fake": {"f2": facts("Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf")}}
     assert got["files"][HIST + "theirs.json"] == other_copy(["f1"])
-    assert "History before the run: 1 history file read, 1 document learned." in summary_of(got)
+    assert "History before the run: 1 history file read, listing 1 document saved into the folder." in summary_of(got)
+    assert "1 already in your chosen folder, saved by another computer." in site
     assert "History entry written: 1 document(s)" in site
+
+
+def test_a_document_another_copy_claims_but_whose_file_is_not_here_is_saved(engine):
+    # Its entry synced down before its PDF did, or the PDF never uploaded.
+    got, _, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")]}, shared={"theirs.json": other_copy(["f1"])})
+    assert got["board"]["fake"]["text"] == "2 new.", got["board"]
+    assert sorted(got["local"]["seen:fake"]) == ["f1", "f2"]
+    assert "Chosen/" + F1 in pdfs
+
+
+def test_a_claim_about_a_different_file_at_that_path_is_not_trusted(engine):
+    got, _, _ = sweep(engine, {"docs": [doc("f1", date="2026-09-28")]},
+                      shared={"theirs.json": other_copy(["f1"]), F1: "%PDF-1.4 something else\n%%EOF"})
+    assert got["board"]["fake"]["text"] == "1 new."
+    assert got["local"]["seen:fake"] == ["f1"]
 
 
 def test_a_run_that_saves_nothing_writes_no_entry(engine):
@@ -209,7 +242,7 @@ def test_a_history_file_that_cannot_be_used_is_logged_and_the_run_goes_on(engine
 
 def test_with_sharing_off_the_folder_history_is_neither_read_nor_written(engine):
     got, _, _ = sweep(engine, {"docs": [doc("f1", date="2026-09-28")]},
-                      local={"historySharingOff": True}, shared={"theirs.json": other_copy(["f1"])})
+                      local={"historySharingOff": True}, shared={"theirs.json": other_copy(["f1"]), F1: PDF})
     assert got["board"]["fake"]["text"] == "1 new."
     assert entries(got) == {}
 
@@ -254,8 +287,8 @@ def test_settings_can_ask_for_a_sync_and_hears_what_it_learned(engine):
       return { fromSite, fromSettings, local: __local };
     }""", other_copy(["f1", "f2"]))
     assert got["fromSite"] == "no answer"
-    assert got["fromSettings"]["imported"] == 2 and got["fromSettings"]["read"] == ["theirs.json"]
-    assert sorted(got["local"]["seen:fake"]) == ["f1", "f2"]
+    assert got["fromSettings"]["listed"] == 2 and got["fromSettings"]["read"] == ["theirs.json"]
+    assert "seen:fake" not in got["local"]
 
 
 # -- waits that never end --------------------------------------------------------

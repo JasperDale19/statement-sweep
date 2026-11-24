@@ -155,7 +155,7 @@ async function shareNow() {
   try { r = await chrome.runtime.sendMessage({ type: "syncHistory" }); } catch (e) { return; }
   if (!r || r.none || r.off || r.busy) return;
   const problems = (r.problems || []).map((p) => (p.name ? `${p.name} in ${SHARED_DIR} was not used: ${p.problem}` : p.problem));
-  const learned = r.imported ? `Learned ${plural(r.imported, "document")} saved into this folder by another copy of Statement Sweep.` : "";
+  const learned = r.listed ? `Found ${plural(r.listed, "document")} saved into this folder by another copy of Statement Sweep. Each is checked in the folder before it is skipped.` : "";
   historyMessage(problems.join(" "), learned);
   await drawHistory();
 }

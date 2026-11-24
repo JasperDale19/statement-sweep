@@ -12,7 +12,7 @@ import { backfillFor, documentDate, isDue, isTaxDocument, keysFor, localIso, sta
 import { amount, cleanUrl, errorText, makeLogs } from "./log.js";
 import { OFFERS_WAIT, hasOffers, makeOffers, offersWanted, offersWords } from "./offers.js";
 import { addFound, estimateNew, foundKey, foundOf, siteProgress } from "./progress.js";
-import { readShared, writeEntry } from "./shared-history.js";
+import { factsOf, inFolderAlready, readShared, sharingOn, writeEntry } from "./shared-history.js";
 
 // The run's logs (log.js): what each site did and why it stopped, written to
 // each site's Logs folder as the run goes. `note` adds one line for a site.
@@ -67,44 +67,69 @@ function within(ms, why, work, stoppable = false) {
     stopWakes.delete(wake);
   });
 }
-// The record shared through your chosen folder (shared-history.js). Every
-// entry there is read before a run, and each site that saved documents into
-// the folder writes a new entry when it ends. A folder that does not answer
-// (a cloud file still downloading, say) is given SYNC_WAIT_MS and the run goes
-// on without it. Reading only ever adds to the record, and an entry is only
-// ever a new file, so a read or write still going after that changes nothing
-// that matters: at worst another copy saves a document again.
+// What other copies saved into your chosen folder (shared-history.js). Its
+// entries are read before a run (and again for a sweep whose folder is not
+// the one read), and each site that saved documents into the folder writes a
+// new entry when it ends. A document another copy saved is skipped only once
+// its file checks out in the folder the sweep saves to. A folder that does
+// not answer (a cloud file still downloading, say) is given SYNC_WAIT_MS and
+// the sweep goes on without it, saving what it could not check.
 const SYNC_WAIT_MS = 30 * 1000;
 const files = (n) => `${n} history ${n === 1 ? "file" : "files"}`;
-// Never throws: a sync that fails is a line in the run's log.
+// The entries last read, and the folder they were read from.
+let sharedRead = null;
+async function readEntries(destination) {
+  const r = await readShared(destination);
+  if (!r.off) sharedRead = { handle: destination, result: r };
+  return r;
+}
+// Never throws: a read that fails is a line in the run's log.
 async function syncHistory(when) {
+  sharedRead = null;
   try {
     const r = await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", async () => {
       const destination = await getFolder("destination");
       if (!destination) return null;
-      if (!(await isGranted(destination))) return { problems: [{ name: "", problem: "Your chosen folder needs permission again." }], read: [], imported: 0, unknown: [] };
-      return readShared(destination);
+      if (!(await isGranted(destination))) return { problems: [{ name: "", problem: "Your chosen folder needs permission again." }], read: [], listed: 0, unknown: [] };
+      return readEntries(destination);
     });
     if (!r || r.off) return r;
-    logs.runLine(`History ${when}: ${files(r.read.length)} read, ${r.imported} document${r.imported === 1 ? "" : "s"} learned.`);
+    logs.runLine(`History ${when}: ${files(r.read.length)} read, listing ${r.listed} document${r.listed === 1 ? "" : "s"} saved into the folder.`);
     for (const p of r.problems) logs.runLine(p.name ? `History file ${p.name} not used: ${p.problem}` : `History not read ${when}: ${p.problem}`, "WARN");
     if (r.unknown.length) logs.runLine(`History files name ${r.unknown.length} site(s) this copy does not have; they are left in their files.`);
     return r;
   } catch (e) {
     logs.runLine(`History not read ${when}: ${errorText(e)}`, "WARN");
-    return { problems: [{ name: "", problem: errorText(e) }], read: [], imported: 0, unknown: [] };
+    return { problems: [{ name: "", problem: errorText(e) }], read: [], listed: 0, unknown: [] };
+  }
+}
+
+// Of `docs`, those another copy saved into `destination`, checked there.
+// Never throws: one that cannot be checked is saved.
+async function savedByOthers(provider, destination, docs) {
+  if (!destination || !docs.length) return new Set();
+  try {
+    return await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", async () => {
+      if (!(await sharingOn())) return new Set();
+      const read = sharedRead && (await sharedRead.handle.isSameEntry(destination).catch(() => false)) ? sharedRead.result : await readEntries(destination);
+      if (!read || read.off) return new Set();
+      return inFolderAlready(destination, provider.id, docs.map((d) => d.id), read.index);
+    });
+  } catch (e) {
+    note(provider, `Could not check what other computers saved, so these are saved here: ${errorText(e)}`, "WARN");
+    return new Set();
   }
 }
 
 // A site's new entry: the documents it saved into `entry.destination`, the
 // folder its sweep used from its start. Never throws.
 async function writeSiteEntry(provider, entry) {
-  if (!entry.destination || !entry.ids.length) return;
+  if (!entry.destination || !entry.saved.length) return;
   try {
-    const name = await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", () => writeEntry(entry.destination, provider.id, entry.ids));
-    if (name) note(provider, `History entry written: ${entry.ids.length} document(s) in ${name}.`);
+    const name = await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", () => writeEntry(entry.destination, provider.id, entry.saved));
+    if (name) note(provider, `History entry written: ${entry.saved.length} document(s) in ${name}.`);
   } catch (e) {
-    note(provider, `History entry not written, so another computer may save these ${entry.ids.length} document(s) again: ${errorText(e)}`, "WARN");
+    note(provider, `History entry not written, so another computer may save these ${entry.saved.length} document(s) again: ${errorText(e)}`, "WARN");
   }
 }
 
@@ -714,8 +739,8 @@ async function saveOne(tabId, provider, doc, destination) {
     if (destination) {
       try {
         const bytes = Uint8Array.from(atob(pdf.base64), (c) => c.charCodeAt(0));
-        await writeFile(destination, withinChosen(destination.name, filename), new Blob([bytes], { type: "application/pdf" }));
-        return { ok: true, bytes: size, inFolder: true };
+        const path = await writeFile(destination, withinChosen(destination.name, filename), new Blob([bytes], { type: "application/pdf" }));
+        return { ok: true, bytes: size, inFolder: path };
       } catch (e) {
         logs.error(provider, "writing to the chosen folder", e);
         return { ok: await saveBase64(pdf.base64, filename), bytes: size, note: "Some documents were saved in Downloads because your chosen folder could not be written." };
@@ -742,8 +767,9 @@ async function saveOne(tabId, provider, doc, destination) {
     }
     if (!destination || !landed.ok) return landed;
     // The original is removed only once the copy is confirmed whole.
+    let moved;
     try {
-      await moveFromInbox(await getFolder("inbox"), stageName, destination, withinChosen(destination.name, filename));
+      moved = await moveFromInbox(await getFolder("inbox"), stageName, destination, withinChosen(destination.name, filename));
     } catch (e) {
       logs.error(provider, "moving a download from the inbox", e);
       // Not a PDF by its bytes: not saved, so it is fetched again next time,
@@ -757,7 +783,7 @@ async function saveOne(tabId, provider, doc, destination) {
     }
     await chrome.downloads.removeFile(landed.id).catch(() => {});
     await chrome.downloads.erase({ id: landed.id }).catch(() => {});
-    return { ...landed, inFolder: true };
+    return { ...landed, inFolder: moved };
   }
   return { ok: false, why: "This document has no way to be saved yet." };
 }
@@ -912,7 +938,7 @@ function bounded(provider, docs) {
 // `entry` gathers what is saved into the chosen folder, for its history entry
 // (writeSiteEntry). The folder is taken once, here: a folder chosen in
 // Settings during the sweep is used from the next one.
-async function sweep(provider, together = false, entry = { destination: null, ids: [] }) {
+async function sweep(provider, together = false, entry = { destination: null, saved: [] }) {
   const destination = await getFolder("destination");
   entry.destination = destination || null;
   const key = `seen:${provider.id}`;
@@ -1021,7 +1047,12 @@ async function sweep(provider, together = false, entry = { destination: null, id
       return say(provider.id, "ok", `Nothing new. ${ids.length} already there ${ids.length === 1 ? "is" : "are"} left as they are; new ones are saved from now on.`);
     }
 
-    const fresh = (list.docs || []).filter((d) => !seen.has(d.id));
+    const unsaved = (list.docs || []).filter((d) => !seen.has(d.id));
+    // Saved into this folder by another computer, and its file is here:
+    // left as it is, and not added to this copy's record.
+    const theirs = await savedByOthers(provider, destination, unsaved);
+    const fresh = unsaved.filter((d) => !theirs.has(d.id));
+    if (theirs.size) note(provider, `${theirs.size} already in your chosen folder, saved by another computer.`);
     // What is done already, and what this list holds still to do. Counted
     // this way, a list read again after its tab was replaced is not counted twice.
     listed = count + failed + fresh.length;
@@ -1081,7 +1112,15 @@ async function sweep(provider, together = false, entry = { destination: null, id
       // sweep is kept rather than written over by the list read at its start.
       for (const id of (await chrome.storage.local.get(key))[key] || []) seen.add(id);
       await chrome.storage.local.set({ [key]: [...seen] });
-      if (result.inFolder) entry.ids.push(doc.id);
+      if (result.inFolder) {
+        // Its size and SHA-256, for other computers to check it by. One that
+        // cannot be read back is left out of the entry: they save it again.
+        const facts = await factsOf(destination, result.inFolder).catch((e) => {
+          note(provider, `Document ${doc.id} is not listed for other computers: ${errorText(e)}`, "WARN");
+          return null;
+        });
+        if (facts) entry.saved.push({ id: doc.id, facts });
+      }
       await remember(provider, [doc], true);
       count += 1;
       logs.counted(provider, "saved");
@@ -1390,7 +1429,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           }
           logs.started(provider);
           note(provider, `Sweep of ${provider.name} begins${together ? ", with the other sites at once" : ""}.`);
-          const entry = { destination: null, ids: [] };
+          const entry = { destination: null, saved: [] };
           try {
             await sweep(provider, together, entry);
           } catch (e) {

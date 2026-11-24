@@ -43,7 +43,9 @@ Chase business cards are kept apart: each is added to only by its own site.
 ## What it keeps, on your computer only
 
 - The documents it saves, in your Downloads folder or a folder you choose.
-- A list of which documents it has already saved, so they are not saved twice.
+- A list of which documents it has already saved, so they are not saved twice,
+  and, with a shared folder, which documents another computer saved there
+  that it found in the folder.
   This holds each document's date and an identifier for it, which for some
   sites includes an account number, and notes which documents are tax forms.
 - From those dates, how often each site sends a document, so it can say which
@@ -75,8 +77,9 @@ Chase business cards are kept apart: each is added to only by its own site.
   document. Old logs are removed after 30 runs per site.
 
 - With a folder chosen and **History File** on (the default), lists of the
-  documents saved into that folder: each one's identifier and date, and
-  which are tax forms, in small files in the folder's
+  documents saved into that folder: each one's identifier and date, which
+  are tax forms, and where in the folder it was saved, with its size and a
+  fingerprint (SHA-256) of it, in small files in the folder's
   `Statement Sweep History` folder. They are there so Statement Sweep on
   another computer using the same folder does not save them again. Never
   your folder and file name settings or which sites are switched off. If the

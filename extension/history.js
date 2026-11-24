@@ -28,7 +28,7 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IDS = 20000;
 const MAX_ID_LENGTH = 1000;
 const MAX_PATTERN_LENGTH = 1000;
-const KEYS = ["format", "version", "exportedAt", "sites", "naming", "off", "dates", "tax"];
+const KEYS = ["format", "version", "exportedAt", "sites", "naming", "off", "dates", "tax", "files"];
 const SEEN = "seen:";
 const DATES = "dates:";
 const TAX = "tax:";
@@ -183,13 +183,31 @@ export function readHistory(text) {
         tax[id] = [...new Set(ids)];
       }
     }
+    // Optional, in the entries of a shared folder (shared-history.js): where
+    // each document was saved in that folder, its size and its SHA-256.
+    const files = {};
+    if (data.files !== undefined && data.files !== null) {
+      if (!isObject(data.files)) refuse("This history file's list of saved files is not in the right form.");
+      for (const [id, byDoc] of Object.entries(data.files)) {
+        if (!known.has(id)) { if (!unknown.includes(id)) unknown.push(id); continue; }
+        const name = nameOf(id);
+        if (!isObject(byDoc) || Object.keys(byDoc).length > MAX_IDS) refuse(`${name}: its list of saved files is not in the right form.`);
+        for (const [doc, f] of Object.entries(byDoc)) {
+          const ok = doc && doc.length <= MAX_ID_LENGTH && isObject(f) && typeof f.path === "string" && f.path.length <= MAX_ID_LENGTH
+            && !f.path.startsWith("/") && !f.path.split("/").some((part) => !part || part === "." || part === "..")
+            && Number.isSafeInteger(f.size) && f.size >= 0 && typeof f.sha256 === "string" && /^[0-9a-f]{64}$/.test(f.sha256);
+          if (!ok) refuse(`${name}: its list of saved files has an entry that is not a saved file.`);
+        }
+        files[id] = Object.fromEntries(Object.entries(byDoc).map(([doc, f]) => [doc, { path: f.path, size: f.size, sha256: f.sha256 }]));
+      }
+    }
     let naming = null, off = null;
     if (data.naming !== undefined && data.naming !== null) naming = readNaming(data.naming);
     if (data.off !== undefined && data.off !== null) {
       if (!Array.isArray(data.off) || data.off.length > MAX_IDS || !data.off.every((v) => typeof v === "string")) refuse("This history file's list of switched-off sites is not in the right form.");
       off = [...new Set(data.off.filter((id) => known.has(id)))];
     }
-    return { ok: true, sites, unknown, naming, off, dates, tax, exportedAt: data.exportedAt || "" };
+    return { ok: true, sites, unknown, naming, off, dates, tax, files, exportedAt: data.exportedAt || "" };
   } catch (e) {
     if (e instanceof Refused) return { ok: false, problem: e.message };
     throw e;

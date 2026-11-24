@@ -8,12 +8,14 @@ What changed for people using Statement Sweep, newest first. The version is
 - Copies of Statement Sweep on different computers can share one folder,
   such as one in iCloud Drive or Google Drive, without saving the same
   document twice. Each site that saves documents into the folder adds a
-  small file listing them to the folder's `Statement Sweep History`
-  folder, and every copy reads those files before each sync and when the
-  folder is chosen. Documents saved somewhere else before are not listed,
-  so they are still saved into the shared folder. A file that cannot be
-  read is reported in the run log and left as it is. **History File** in
-  Settings turns it off.
+  small file listing them, with where each was saved and a fingerprint of
+  it, to the folder's `Statement Sweep History` folder. Before saving a
+  document, a copy skips it only if another copy listed it and that very
+  file is in the folder it is saving to. A document still syncing, never
+  uploaded, or in a different folder is saved. Documents saved somewhere
+  else before are not listed, so they are still saved into the shared
+  folder. A list that cannot be read is reported in the run log and left as
+  it is. **History File** in Settings turns it off.
 - Settings is shorter and calmer. File naming is two menus and an example:
   each menu shows what its choices give when opened, the pattern box and
   its tools appear only for Custom, and rules for one site wait behind
