@@ -43,9 +43,7 @@ Chase business cards are kept apart: each is added to only by its own site.
 ## What it keeps, on your computer only
 
 - The documents it saves, in your Downloads folder or a folder you choose.
-- A list of which documents it has already saved, so they are not saved twice,
-  and, with a shared folder, which documents another computer saved there
-  that it found in the folder.
+- A list of which documents it has already saved, so they are not saved twice.
   This holds each document's date and an identifier for it, which for some
   sites includes an account number, and notes which documents are tax forms.
 - From those dates, how often each site sends a document, so it can say which

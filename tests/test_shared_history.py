@@ -184,17 +184,16 @@ def test_a_claim_whose_file_is_not_there_as_claimed_does_not_count(tab, pdfs, wh
     assert got["result"] == [], why
 
 
-def test_a_file_that_checked_out_is_not_read_again_in_the_same_folder(tab):
+def test_a_file_that_checked_out_and_was_then_removed_no_longer_counts(tab):
     call = with_pdfs({PATH_A: PDF_A}, """async (s, root) => {
       const index = (await s.readShared(root)).index;
       const first = [...await s.inFolderAlready(root, 'amex', ['o1'], index)];
-      // Gone from the folder now, and still counted: it was there, as a document this copy saved would be.
-      await (await (await (await root.getDirectoryHandle('Statement Sweep')).getDirectoryHandle('American Express'))).removeEntry('2026-10-28 American Express Statement.pdf');
+      await (await (await root.getDirectoryHandle('Statement Sweep')).getDirectoryHandle('American Express')).removeEntry('2026-10-28 American Express Statement.pdf');
       const again = [...await s.inFolderAlready(root, 'amex', ['o1'], index)];
       return [first, again];
     }""")
     got = run(tab, call, {}, {"x.json": entry()})
-    assert got["result"] == [["o1"], ["o1"]]
+    assert got["result"] == [["o1"], []]
 
 
 def test_a_file_that_checked_out_in_one_folder_is_checked_again_in_another(tab):

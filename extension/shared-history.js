@@ -15,20 +15,17 @@
 // entry gives, with the same size and SHA-256. So a document whose file has
 // not synced down yet, failed to upload, was removed, or is in a different
 // folder from the one chosen now, is saved again here. What other copies
-// saved is never added to this copy's own record (`seen:`): a file that
-// checked out is remembered only with the folder it was found in (VERIFIED),
-// so it is not read again each run.
+// saved is never added to this copy's own record (`seen:`), and is checked
+// again each time, so one later removed or changed is saved again too.
 //
 // Whatever goes wrong, the worst that follows is a document saved twice,
 // never one left unsaved. `historySharingOff: true` in chrome.storage.local
 // turns it all off.
 import { FORMAT, MAX_FILE_BYTES, MAX_IDS, VERSION, readHistory } from "./history.js";
-import { getFolder, setFolder, writeFile } from "./folders.js";
+import { writeFile } from "./folders.js";
 
 export const SHARED_DIR = "Statement Sweep History";
 export const SHARING_OFF = "historySharingOff";
-const VERIFIED = "verified";
-const MAX_VERIFIED = 200000;
 const local = () => chrome.storage.local;
 const isObject = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
@@ -99,26 +96,15 @@ export async function readShared(root) {
 // file is in `root` as an entry in `index` (readShared) says. Answers a Set.
 export async function inFolderAlready(root, siteId, ids, index) {
   const listed = (index && index[siteId]) || {};
-  const asked = ids.filter((id) => listed[id]);
-  if (!asked.length) return new Set();
-  const stored = await getFolder(VERIFIED);
-  const same = isObject(stored) && stored.handle ? await stored.handle.isSameEntry(root).catch(() => false) : false;
-  const known = new Set(same && Array.isArray(stored.keys) ? stored.keys : []);
-  const key = (id) => `${siteId}\n${id}`;
   const there = new Set();
-  let added = false;
-  for (const id of asked) {
-    if (known.has(key(id))) { there.add(id); continue; }
-    for (const facts of listed[id]) {
+  for (const id of ids) {
+    for (const facts of listed[id] || []) {
       const file = await fileAt(root, facts.path).catch(() => null);
       if (!file || file.size !== facts.size || (await sha256(file)) !== facts.sha256) continue;
       there.add(id);
-      known.add(key(id));
-      added = true;
       break;
     }
   }
-  if (added || !same) await setFolder(VERIFIED, { handle: root, keys: [...known].slice(-MAX_VERIFIED) });
   return there;
 }
 
