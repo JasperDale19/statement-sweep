@@ -85,7 +85,9 @@ Chase business cards are kept apart: each is added to only by its own site.
   extension is removed until you delete it.
 
 All of this stays in your browser's storage and the folders above. Removing
-the extension deletes everything except the documents you saved.
+the extension deletes what is in your browser's storage. What it wrote to
+your folders stays until you delete it: the documents you saved, the Logs
+folders, and the Statement Sweep History folder.
 
 ## Why it asks for its permissions
 

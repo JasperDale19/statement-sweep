@@ -38,6 +38,14 @@ window.__realTimeout = realTimeout;
 window.setTimeout = (f, ms, ...rest) => realTimeout(f, !window.__shrink || ms < 120000 ? ms : ms < 300000 ? 300 : 3000, ...rest);
 chrome.downloads.removeFile = async (id) => { __events.push(['removeFile', id]); };
 chrome.downloads.erase = async ({ id }) => { __events.push(['erase', id]); };
+// A download the engine starts itself, finished at once, when the plan says so.
+const standInDownload = chrome.downloads.download;
+chrome.downloads.download = async (o) => {
+  if (!(window.__plan || {}).finishDownloads) return standInDownload(o);
+  __events.push(['download', o.filename]);
+  realTimeout(() => on.dl.set.forEach((g) => g({ id: 91, state: { current: 'complete' } })), 0);
+  return 91;
+};
 window.__download = () => {
   const id = 77;
   const item = { id, url: 'https://bank.test/files/s.pdf', finalUrl: 'https://bank.test/files/s.pdf', referrer: 'https://bank.test/docs', mime: 'application/pdf', filename: 's.pdf' };
@@ -59,6 +67,11 @@ START = """async ({ plan, local, shrink, stopWhen, sender, shared }) => {
   const chosen = await root.getDirectoryHandle('Chosen', { create: true });
   await f.setFolder('destination', chosen);
   await f.setFolder('inbox', await root.getDirectoryHandle('Inbox', { create: true }));
+  // A folder where the document would go, so the chosen folder cannot take it.
+  for (const path of plan.blockPaths || []) {
+    let dir = chosen;
+    for (const part of path.split('/')) dir = await dir.getDirectoryHandle(part, { create: true });
+  }
   // Other copies' history files, already in the chosen folder.
   for (const [name, text] of Object.entries(shared || {})) {
     const dir = await chosen.getDirectoryHandle('Statement Sweep History', { create: true });
@@ -182,7 +195,17 @@ def test_with_sharing_off_the_folder_history_is_neither_read_nor_written(engine)
     # Not learned from the other copy, so it was saved.
     assert got["local"]["seen:fake"] == ["f1"]
     # Still noted as in the folder, so turning sharing on later writes it.
-    assert got["local"]["shared:fake"] == ["f1"]
+    assert [v for k, v in got["local"].items() if k.startswith("shared:") and k.endswith(":fake")] == [["f1"]]
+
+
+def test_a_document_saved_in_downloads_instead_is_not_counted_as_in_the_folder(engine):
+    blocked = "Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"
+    got, _, pdfs = sweep(engine, {"docs": [doc("f1")], "blockPaths": [blocked], "finishDownloads": True}, local={"copyId": "mine"})
+    assert got["board"]["fake"]["state"] == "ok" and "saved in Downloads" in got["board"]["fake"]["text"]
+    assert got["local"]["seen:fake"] == ["f1"]
+    assert ["download", "Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"] in got["events"]
+    assert not [k for k in got["local"] if k.startswith("shared:")]
+    assert "Chosen/Statement Sweep History/mine.json" not in got["files"]
 
 
 def test_settings_can_ask_for_a_sync_and_hears_what_it_did(engine):

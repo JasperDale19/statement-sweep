@@ -62,9 +62,9 @@ def sync(tab, store=None, files=None, options=None):
         }
       }
       const shared = await import('/shared-history.js');
-      const opts = { ...options };
-      if (opts.refuseWrite) opts.stillWanted = () => false;
-      delete opts.refuseWrite;
+      const opts = {};
+      // True for the first `wantedFor` asks, then false: a caller giving up part way.
+      if (options.wantedFor !== undefined) { let left = options.wantedFor; opts.stillWanted = () => left-- > 0; }
       const result = await shared.syncShared(chosen, opts);
       const out = {};
       const dir = await chosen.getDirectoryHandle('Statement Sweep History').catch(() => null);
@@ -80,7 +80,7 @@ def other(**over):
     return json.dumps(file)
 
 
-SAVED_HERE = {"copyId": "mine", "seen:amex": ["a1", "old"], "shared:amex": ["a1"],
+SAVED_HERE = {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ["a1", "old"], "shared:t1:amex": ["a1"], "shared:t0:amex": ["old"],
               "dates:amex": {"a1": "2026-10-28", "old": "2025-01-28"}, "tax:amex": ["a1"],
               "naming": {"base": "Secret Base", "folder": "{provider}", "file": "", "providers": {}}, "off": ["chase"]}
 
@@ -96,7 +96,7 @@ def test_this_copy_writes_only_what_it_saved_into_the_folder(tab):
     assert got["result"]["wrote"] is True
     assert list(got["files"]) == ["mine.json"]
     file = json.loads(got["files"]["mine.json"])
-    # Only what went into this folder: "old" was saved somewhere else.
+    # Only what went into this folder: "old" was saved into another one.
     assert file["sites"] == {"amex": ["a1"]}
     assert file["dates"] == {"amex": {"a1": "2026-10-28"}}
     assert file["tax"] == {"amex": ["a1"]}
@@ -117,7 +117,7 @@ def test_another_copys_file_is_learned_and_left_as_it_was(tab):
     assert got["store"]["seen:amex"] == ["a1", "o1", "o2"]
     assert got["store"]["dates:amex"] == {"o1": "2026-09-28", "o2": "2026-10-28"}
     # Learned from the folder, not saved into it by this copy.
-    assert "shared:amex" not in got["store"]
+    assert not [k for k in got["store"] if k.startswith("shared:")]
     assert got["files"]["theirs.json"] == text
 
 
@@ -128,12 +128,36 @@ def test_learning_never_changes_settings_here(tab):
     assert "off" not in got["store"]
 
 
-def test_this_copys_own_file_is_not_read_as_another_copys(tab):
-    mine = other(sites={"amex": ["ghost"]}, dates={})
-    got = sync(tab, {"copyId": "mine", "seen:amex": ["a1"], "shared:amex": ["a1"]}, {"mine.json": mine})
+def test_this_copys_own_file_is_read_back_so_going_back_to_a_folder_keeps_it(tab):
+    # Saved a2 into this folder before, then chose another folder and came back.
+    mine = other(sites={"amex": ["a2"]}, dates={"amex": {"a2": "2026-09-28"}})
+    store = {"copyId": "mine", "sharedFolder": "t2", "seen:amex": ["a1", "a2"], "shared:t2:amex": ["a1"]}
+    got = sync(tab, store, {"mine.json": mine})
     assert got["result"]["read"] == [] and got["result"]["imported"] == 0
-    assert got["store"]["seen:amex"] == ["a1"]
-    assert json.loads(got["files"]["mine.json"])["sites"] == {"amex": ["a1"]}
+    assert got["store"]["shared:t2:amex"] == ["a1", "a2"]
+    assert json.loads(got["files"]["mine.json"])["sites"] == {"amex": ["a1", "a2"]}
+
+
+def test_a_file_of_this_copys_name_written_by_another_copy_gets_this_copy_a_new_name(tab):
+    # A copied Chrome profile: the same id, and documents this copy never saved.
+    theirs = other(sites={"amex": ["z1"]}, dates={})
+    got = sync(tab, {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ["a1"], "shared:t1:amex": ["a1"]}, {"mine.json": theirs})
+    renamed = got["store"]["copyId"]
+    assert renamed != "mine"
+    assert got["files"]["mine.json"] == theirs
+    assert got["store"]["seen:amex"] == ["a1", "z1"]
+    assert json.loads(got["files"][f"{renamed}.json"])["sites"] == {"amex": ["a1"]}
+    assert "another copy with this copy's id" in got["result"]["problems"][0]["problem"]
+
+
+@pytest.mark.parametrize("text", ["{broken", other(version=2)])
+def test_this_copys_own_file_that_cannot_be_used_is_left_alone_and_not_written(tab, text):
+    got = sync(tab, {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ["a1"], "shared:t1:amex": ["a1"]}, {"mine.json": text, "good.json": other()})
+    assert got["files"]["mine.json"] == text and got["result"]["wrote"] is False
+    assert got["result"]["problems"][0]["name"] == "mine.json"
+    assert "left as it is" in got["result"]["problems"][0]["problem"]
+    # The other copies' files are still learned.
+    assert got["store"]["seen:amex"] == ["a1", "o1", "o2"]
 
 
 @pytest.mark.parametrize("text, says", [
@@ -169,38 +193,55 @@ def test_with_sharing_turned_off_nothing_is_read_or_written(tab):
 
 
 def test_a_sync_no_longer_wanted_writes_nothing(tab):
-    got = sync(tab, SAVED_HERE, options={"refuseWrite": True})
-    assert got["result"]["wrote"] is False and got["files"] == {}
+    got = sync(tab, SAVED_HERE, options={"wantedFor": 0}, files={"theirs.json": other()})
+    assert got["result"] == {"gaveUp": True}
+    assert list(got["files"]) == ["theirs.json"]
+    assert got["store"]["seen:amex"] == ["a1", "old"]
+
+
+def test_a_sync_given_up_part_way_changes_nothing_after(tab):
+    two = other(sites={"amex": ["p1"]}, dates={})
+    got = sync(tab, SAVED_HERE, options={"wantedFor": 1}, files={"a.json": other(), "b.json": two})
+    assert got["result"] == {"gaveUp": True}
+    # The first file was taken in before the sync was given up on; nothing after.
+    assert got["store"]["seen:amex"] == ["a1", "old", "o1", "o2"]
+    assert sorted(got["files"]) == ["a.json", "b.json"]
 
 
 def test_a_record_too_large_to_read_back_is_not_written(tab):
     ids = [f"d{n}" for n in range(20001)]
-    got = sync(tab, {"copyId": "mine", "seen:amex": ids, "shared:amex": ids})
+    got = sync(tab, {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ids, "shared:t1:amex": ids})
     assert got["result"]["wrote"] is False
     assert "too large" in got["result"]["problems"][0]["problem"]
     assert got["files"] == {}
 
 
 def test_a_copy_without_an_id_is_given_one_that_is_kept(tab):
-    got = sync(tab, {"seen:amex": ["a1"], "shared:amex": ["a1"]})
+    got = sync(tab, {"sharedFolder": "t1", "seen:amex": ["a1"], "shared:t1:amex": ["a1"]})
     made = got["store"]["copyId"]
     assert len(made) >= 16 and list(got["files"]) == [f"{made}.json"]
 
 
 def test_note_and_forget_what_was_saved_into_the_folder(tab):
     tab.goto(BASE)
-    tab.evaluate("sessionStorage.setItem('seed', JSON.stringify({'seen:amex': ['a1'], 'shared:chase': ['c0']}))")
+    tab.evaluate("sessionStorage.setItem('seed', JSON.stringify({'seen:amex': ['a1'], 'shared:t0:chase': ['c0']}))")
     tab.goto(BASE)
     got = tab.evaluate("""async () => {
       const s = await import('/shared-history.js');
-      await s.noteShared('amex', ['a1']);
-      await s.noteShared('amex', ['a1', 'a2']);
+      const token = await s.folderToken();
+      await s.noteShared('amex', ['a1'], token);
+      await s.noteShared('amex', ['a1', 'a2'], token);
       const noted = { ...__store };
       await s.forgetShared();
-      return [noted, __store];
+      // A save that finishes after a new folder was chosen notes into the old token.
+      await s.noteShared('amex', ['late'], token);
+      return [token, noted, { ...__store }, await s.folderToken()];
     }""")
-    assert got[0]["shared:amex"] == ["a1", "a2"] and got[0]["shared:chase"] == ["c0"]
-    assert "shared:amex" not in got[1] and "shared:chase" not in got[1] and got[1]["seen:amex"] == ["a1"]
+    token, noted, after, new_token = got
+    assert noted[f"shared:{token}:amex"] == ["a1", "a2"] and noted["shared:t0:chase"] == ["c0"]
+    assert new_token != token and after["seen:amex"] == ["a1"]
+    assert [k for k in after if k.startswith("shared:")] == [f"shared:{token}:amex"]
+    assert not [k for k in after if k.startswith(f"shared:{new_token}:")]
 
 
 # -- Settings ----------------------------------------------------------------------
@@ -253,23 +294,22 @@ def test_a_problem_with_a_history_file_is_shown(stab):
     assert stab.inner_text("#historyProblem") == "bad.json in Statement Sweep History was not used: This is not a Statement Sweep history file."
 
 
-def test_a_different_folder_forgets_what_was_saved_into_the_last_one(stab):
-    settings(stab, {"seen:amex": ["a1"], "shared:amex": ["a1"]})
+def test_choosing_a_folder_starts_afresh_on_what_is_known_to_be_in_it(stab):
+    settings(stab, {"seen:amex": ["a1"], "sharedFolder": "t0", "shared:t0:amex": ["a1"]})
     choose(stab, "First")
-    stab.evaluate("() => { __store['shared:amex'] = ['a1']; }")
-    choose(stab, "First")
-    assert stab.evaluate("__store['shared:amex']") == ["a1"]
-    choose(stab, "Second")
-    stab.wait_for_function("!('shared:amex' in __store)")
+    stab.wait_for_function("__store.sharedFolder !== 't0'")
+    assert not [k for k in stab.evaluate("__store") if k.startswith("shared:")]
     assert stab.evaluate("__store['seen:amex']") == ["a1"]
+    # Stored before the token changes, so a save that sees the new token saves into the new folder.
+    assert stab.evaluate("__sent") == [{"type": "syncHistory"}]
 
 
 def test_use_downloads_forgets_what_was_saved_into_the_folder(stab):
-    settings(stab, {"shared:amex": ["a1"]})
+    settings(stab, {"sharedFolder": "t0", "shared:t0:amex": ["a1"]})
     choose(stab, "First")
-    stab.evaluate("() => { __store['shared:amex'] = ['a1']; }")
+    stab.evaluate("() => { __store['shared:' + __store.sharedFolder + ':amex'] = ['a1']; window.__was = __store.sharedFolder; }")
     stab.click("#useDownloads")
-    stab.wait_for_function("!('shared:amex' in __store)")
+    stab.wait_for_function("__store.sharedFolder !== __was && !Object.keys(__store).some((k) => k.startsWith('shared:'))")
 
 
 def test_sharing_is_on_with_a_folder_and_can_be_turned_off(stab):

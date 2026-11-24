@@ -139,10 +139,10 @@ $("chooseDest").addEventListener("click", async () => {
   locationProblem("");
   const handle = await pickFolder({ id: "sweep-destination", startIn: "documents" });
   if (!handle) return;
-  // What was saved into the last folder is not in a different one.
-  const same = destination ? await destination.isSameEntry(handle).catch(() => false) : false;
-  if (!same) await forgetShared();
   await setFolder("destination", handle);
+  // Nothing saved so far is known to be in this folder. What this copy saved
+  // into it before is read back from its own history file (shareNow).
+  await forgetShared();
   destination = handle;
   await makeInbox();
   drawLocation();
@@ -182,8 +182,8 @@ $("allowInbox").addEventListener("click", async () => {
 
 $("useDownloads").addEventListener("click", async () => {
   locationProblem("");
-  await forgetShared();
   await forgetFolders();
+  await forgetShared();
   destination = null;
   inbox = null;
   drawLocation();
