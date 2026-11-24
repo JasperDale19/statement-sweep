@@ -22,7 +22,6 @@ Object.defineProperty(window, 'chrome', {value: {storage: {local: {
     return out;
   },
   set: async (obj) => { Object.assign(__store, copy(obj)); },
-  remove: async (keys) => { for (const k of typeof keys === 'string' ? [keys] : keys) delete __store[k]; },
 }}, downloads: {
   download: async (o) => {
     __downloads.push(o);

@@ -1,9 +1,11 @@
 """The record of what has been saved, shared through the folder you chose, in
-a real Chromium with the extension's own files. Each copy of Statement Sweep
-writes only its own file there, holding only what it saved into that folder,
-and reads every other copy's. The folder is a stand-in in the browser's own
-storage. Every id and date here is invented."""
+a real Chromium with the extension's own files. Each site that saves into the
+folder writes a new entry there, never over another, holding only what it
+saved there; every entry is read before a run. Whatever goes wrong, the worst
+that may follow is a document saved twice, never one left unsaved. The folder
+is a stand-in in the browser's own storage. Every id and date is invented."""
 import json
+import re
 import pytest
 from playwright.sync_api import sync_playwright
 from test_history import BASE, CHROME, ROOT, TYPES
@@ -42,15 +44,15 @@ def tab(browser):
     t.context.close()
 
 
-# A fresh page with `store` as chrome.storage.local, an empty chosen folder
-# holding `files` (name: text) in its history folder, and the sync run with
-# `options`. Answers the sync's result, the store after it, and every file in
-# the history folder.
-def sync(tab, store=None, files=None, options=None):
+# A fresh page with `store` as chrome.storage.local and an empty chosen folder
+# holding `files` (name: text) in its history folder; then `call` (an async
+# function of the module and the folder) is run. Answers what it answered, the
+# store after it, and every file in the history folder.
+def run(tab, call, store=None, files=None):
     tab.goto(BASE)
     tab.evaluate("s => sessionStorage.setItem('seed', JSON.stringify(s))", store or {})
     tab.goto(BASE)
-    return tab.evaluate("""async ({ files, options }) => {
+    return tab.evaluate("""async ({ call, files }) => {
       const root = await navigator.storage.getDirectory();
       await root.removeEntry('Chosen', { recursive: true }).catch(() => {});
       const chosen = await root.getDirectoryHandle('Chosen', { create: true });
@@ -62,186 +64,142 @@ def sync(tab, store=None, files=None, options=None):
         }
       }
       const shared = await import('/shared-history.js');
-      const opts = {};
-      // True for the first `wantedFor` asks, then false: a caller giving up part way.
-      if (options.wantedFor !== undefined) { let left = options.wantedFor; opts.stillWanted = () => left-- > 0; }
-      const result = await shared.syncShared(chosen, opts);
+      const result = await (0, eval)(call)(shared, chosen);
       const out = {};
       const dir = await chosen.getDirectoryHandle('Statement Sweep History').catch(() => null);
       if (dir) for await (const [n, h] of dir.entries()) out[n] = await (await h.getFile()).text();
       return { result, store: __store, files: out };
-    }""", {"files": files or {}, "options": options or {}})
+    }""", {"call": call, "files": files or {}})
 
 
-def other(**over):
+READ = "async (s, root) => s.readShared(root)"
+
+
+def entry(**over):
     file = {"format": "statement-sweep-history", "version": 1, "exportedAt": "2026-11-20T10:00:00.000Z",
             "sites": {"amex": ["o1", "o2"]}, "dates": {"amex": {"o1": "2026-09-28", "o2": "2026-10-28"}}}
     file.update(over)
     return json.dumps(file)
 
 
-SAVED_HERE = {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ["a1", "old"], "shared:t1:amex": ["a1"], "shared:t0:amex": ["old"],
-              "dates:amex": {"a1": "2026-10-28", "old": "2025-01-28"}, "tax:amex": ["a1"],
-              "naming": {"base": "Secret Base", "folder": "{provider}", "file": "", "providers": {}}, "off": ["chase"]}
+def write(site, ids, when="2026-11-24T14:05:09"):
+    return f"async (s, root) => s.writeEntry(root, {json.dumps(site)}, {json.dumps(ids)}, new Date({json.dumps(when)}))"
 
 
-def test_nothing_saved_into_the_folder_writes_no_file(tab):
-    got = sync(tab, {"copyId": "mine", "seen:amex": ["x1"]})
-    assert got["result"]["wrote"] is False
+STORE = {"seen:amex": ["a1", "a2", "old"], "dates:amex": {"a1": "2026-10-28", "a2": "2026-09-28", "old": "2025-01-28"},
+         "tax:amex": ["a1"], "naming": {"base": "Secret Base", "folder": "{provider}", "file": "", "providers": {}}, "off": ["chase"]}
+NAME = re.compile(r"^2026-11-24 140509 [0-9a-f-]{36}\.json$")
+
+
+# -- reading ---------------------------------------------------------------------
+
+def test_with_no_history_folder_nothing_is_read_and_nothing_is_made(tab):
+    got = run(tab, READ, {"seen:amex": ["a1"]})
+    assert got["result"] == {"read": [], "imported": 0, "unknown": [], "problems": []}
     assert got["files"] == {}
 
 
-def test_this_copy_writes_only_what_it_saved_into_the_folder(tab):
-    got = sync(tab, SAVED_HERE)
-    assert got["result"]["wrote"] is True
-    assert list(got["files"]) == ["mine.json"]
-    file = json.loads(got["files"]["mine.json"])
-    # Only what went into this folder: "old" was saved into another one.
-    assert file["sites"] == {"amex": ["a1"]}
-    assert file["dates"] == {"amex": {"a1": "2026-10-28"}}
-    assert file["tax"] == {"amex": ["a1"]}
-    # Never the settings: folder and file names and switched-off sites stay here.
-    assert "naming" not in file and "off" not in file
-
-
-def test_the_written_file_reads_back_as_a_history_file(tab):
-    got = sync(tab, SAVED_HERE)
-    back = tab.evaluate("async (t) => (await import('/history.js')).readHistory(t)", got["files"]["mine.json"])
-    assert back["ok"] is True and back["sites"] == {"amex": ["a1"]}
-
-
-def test_another_copys_file_is_learned_and_left_as_it_was(tab):
-    text = other()
-    got = sync(tab, {"copyId": "mine", "seen:amex": ["a1"]}, {"theirs.json": text})
-    assert got["result"]["imported"] == 2 and got["result"]["read"] == ["theirs.json"]
-    assert got["store"]["seen:amex"] == ["a1", "o1", "o2"]
+def test_every_entry_is_learned_and_left_as_it_was(tab):
+    one, two = entry(), entry(sites={"amex": ["o2", "o3"]}, dates={})
+    got = run(tab, READ, {"seen:amex": ["a1"]}, {"x.json": one, "y.json": two})
+    assert got["result"]["read"] == ["x.json", "y.json"] and got["result"]["imported"] == 3
+    assert got["store"]["seen:amex"] == ["a1", "o1", "o2", "o3"]
     assert got["store"]["dates:amex"] == {"o1": "2026-09-28", "o2": "2026-10-28"}
-    # Learned from the folder, not saved into it by this copy.
-    assert not [k for k in got["store"] if k.startswith("shared:")]
-    assert got["files"]["theirs.json"] == text
+    assert got["files"] == {"x.json": one, "y.json": two}
+
+
+def test_reading_again_learns_nothing_new(tab):
+    got = run(tab, READ, {"seen:amex": ["o1", "o2"]}, {"x.json": entry()})
+    assert got["result"]["imported"] == 0 and got["store"]["seen:amex"] == ["o1", "o2"]
 
 
 def test_learning_never_changes_settings_here(tab):
-    text = other(naming={"base": "Theirs", "folder": "", "file": "", "providers": {}}, off=["amex"])
-    got = sync(tab, {"copyId": "mine", "naming": {"base": "Mine", "folder": "", "file": "", "providers": {}}}, {"theirs.json": text})
-    assert got["store"]["naming"]["base"] == "Mine"
-    assert "off" not in got["store"]
-
-
-def test_this_copys_own_file_is_read_back_so_going_back_to_a_folder_keeps_it(tab):
-    # Saved a2 into this folder before, then chose another folder and came back.
-    mine = other(sites={"amex": ["a2"]}, dates={"amex": {"a2": "2026-09-28"}})
-    store = {"copyId": "mine", "sharedFolder": "t2", "seen:amex": ["a1", "a2"], "shared:t2:amex": ["a1"]}
-    got = sync(tab, store, {"mine.json": mine})
-    assert got["result"]["read"] == [] and got["result"]["imported"] == 0
-    assert got["store"]["shared:t2:amex"] == ["a1", "a2"]
-    assert json.loads(got["files"]["mine.json"])["sites"] == {"amex": ["a1", "a2"]}
-
-
-def test_a_file_of_this_copys_name_written_by_another_copy_gets_this_copy_a_new_name(tab):
-    # A copied Chrome profile: the same id, and documents this copy never saved.
-    theirs = other(sites={"amex": ["z1"]}, dates={})
-    got = sync(tab, {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ["a1"], "shared:t1:amex": ["a1"]}, {"mine.json": theirs})
-    renamed = got["store"]["copyId"]
-    assert renamed != "mine"
-    assert got["files"]["mine.json"] == theirs
-    assert got["store"]["seen:amex"] == ["a1", "z1"]
-    assert json.loads(got["files"][f"{renamed}.json"])["sites"] == {"amex": ["a1"]}
-    assert "another copy with this copy's id" in got["result"]["problems"][0]["problem"]
-
-
-@pytest.mark.parametrize("text", ["{broken", other(version=2)])
-def test_this_copys_own_file_that_cannot_be_used_is_left_alone_and_not_written(tab, text):
-    got = sync(tab, {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ["a1"], "shared:t1:amex": ["a1"]}, {"mine.json": text, "good.json": other()})
-    assert got["files"]["mine.json"] == text and got["result"]["wrote"] is False
-    assert got["result"]["problems"][0]["name"] == "mine.json"
-    assert "left as it is" in got["result"]["problems"][0]["problem"]
-    # The other copies' files are still learned.
-    assert got["store"]["seen:amex"] == ["a1", "o1", "o2"]
+    text = entry(naming={"base": "Theirs", "folder": "", "file": "", "providers": {}}, off=["amex"])
+    got = run(tab, READ, {"naming": {"base": "Mine", "folder": "", "file": "", "providers": {}}}, {"x.json": text})
+    assert got["store"]["naming"]["base"] == "Mine" and "off" not in got["store"]
 
 
 @pytest.mark.parametrize("text, says", [
     ("{not json", "could not be read"),
-    (other(version=2), "newer Statement Sweep"),
+    (entry(version=2), "newer Statement Sweep"),
     (json.dumps({"hello": 1}), "not a Statement Sweep history file"),
 ])
-def test_a_file_that_cannot_be_used_is_reported_left_alone_and_the_rest_still_learned(tab, text, says):
-    got = sync(tab, {"copyId": "mine"}, {"bad.json": text, "good.json": other()})
+def test_an_entry_that_cannot_be_used_is_reported_left_alone_and_the_rest_still_learned(tab, text, says):
+    got = run(tab, READ, {}, {"bad.json": text, "good.json": entry()})
     problems = got["result"]["problems"]
     assert [p["name"] for p in problems] == ["bad.json"] and says in problems[0]["problem"]
     assert got["store"]["seen:amex"] == ["o1", "o2"]
     assert got["files"]["bad.json"] == text
 
 
-def test_a_site_this_copy_does_not_know_stays_in_its_file(tab):
-    text = other(sites={"amex": ["o1"], "future-bank": ["f1"]}, dates={})
-    got = sync(tab, {"copyId": "mine"}, {"theirs.json": text})
-    assert got["result"]["unknown"] == ["future-bank"]
-    assert got["files"]["theirs.json"] == text
+def test_a_site_this_copy_does_not_know_stays_in_its_entry(tab):
+    text = entry(sites={"amex": ["o1"], "future-bank": ["f1"]}, dates={})
+    got = run(tab, READ, {}, {"x.json": text})
+    assert got["result"]["unknown"] == ["future-bank"] and got["files"]["x.json"] == text
 
 
-def test_files_that_are_not_json_are_passed_over(tab):
-    got = sync(tab, {"copyId": "mine"}, {".DS_Store": "x", "notes.txt": "x", "good.json": other()})
+def test_files_that_are_not_entries_are_passed_over(tab):
+    got = run(tab, READ, {}, {".DS_Store": "x", "notes.txt": "x", "._x.json": "x", "good.json": entry()})
     assert got["result"]["read"] == ["good.json"] and got["result"]["problems"] == []
 
 
-def test_with_sharing_turned_off_nothing_is_read_or_written(tab):
-    got = sync(tab, {**SAVED_HERE, "historySharingOff": True}, {"theirs.json": other()})
-    assert got["result"] == {"off": True}
-    assert got["store"]["seen:amex"] == ["a1", "old"]
-    assert list(got["files"]) == ["theirs.json"]
+def test_with_sharing_turned_off_nothing_is_read(tab):
+    got = run(tab, READ, {"historySharingOff": True}, {"x.json": entry()})
+    assert got["result"] == {"off": True} and "seen:amex" not in got["store"]
 
 
-def test_a_sync_no_longer_wanted_writes_nothing(tab):
-    got = sync(tab, SAVED_HERE, options={"wantedFor": 0}, files={"theirs.json": other()})
-    assert got["result"] == {"gaveUp": True}
-    assert list(got["files"]) == ["theirs.json"]
-    assert got["store"]["seen:amex"] == ["a1", "old"]
+# -- writing -----------------------------------------------------------------------
+
+def test_an_entry_holds_only_the_documents_given_with_their_dates_and_tax_marks(tab):
+    got = run(tab, write("amex", ["a1", "a2"]), STORE)
+    assert NAME.match(got["result"]), got["result"]
+    file = json.loads(got["files"][got["result"]])
+    assert file["sites"] == {"amex": ["a1", "a2"]}
+    assert file["dates"] == {"amex": {"a1": "2026-10-28", "a2": "2026-09-28"}}
+    assert file["tax"] == {"amex": ["a1"]}
+    # Never the settings: folder and file names and switched-off sites stay here.
+    assert "naming" not in file and "off" not in file
 
 
-def test_a_sync_given_up_part_way_changes_nothing_after(tab):
-    two = other(sites={"amex": ["p1"]}, dates={})
-    got = sync(tab, SAVED_HERE, options={"wantedFor": 1}, files={"a.json": other(), "b.json": two})
-    assert got["result"] == {"gaveUp": True}
-    # The first file was taken in before the sync was given up on; nothing after.
-    assert got["store"]["seen:amex"] == ["a1", "old", "o1", "o2"]
-    assert sorted(got["files"]) == ["a.json", "b.json"]
+def test_an_entry_reads_back_as_a_history_file(tab):
+    got = run(tab, write("amex", ["a1"]), STORE)
+    back = tab.evaluate("async (t) => (await import('/history.js')).readHistory(t)", got["files"][got["result"]])
+    assert back["ok"] is True and back["sites"] == {"amex": ["a1"]}
 
 
-def test_a_record_too_large_to_read_back_is_not_written(tab):
+def test_entries_written_at_the_same_moment_never_write_over_each_other(tab):
+    call = """async (s, root) => {
+      const when = new Date('2026-11-24T14:05:09');
+      return Promise.all([s.writeEntry(root, 'amex', ['a1'], when), s.writeEntry(root, 'amex', ['a2'], when)]);
+    }"""
+    existing = {"2026-11-24 140509 old.json": entry()}
+    got = run(tab, call, STORE, existing)
+    assert len(set(got["result"])) == 2 and len(got["files"]) == 3
+    assert got["files"]["2026-11-24 140509 old.json"] == entry()
+
+
+def test_nothing_to_write_writes_nothing(tab):
+    got = run(tab, write("amex", []), STORE)
+    assert got["result"] is None and got["files"] == {}
+
+
+def test_with_sharing_turned_off_no_entry_is_written(tab):
+    got = run(tab, write("amex", ["a1"]), {**STORE, "historySharingOff": True})
+    assert got["result"] is None and got["files"] == {}
+
+
+def test_more_documents_than_an_entry_can_hold_is_refused(tab):
     ids = [f"d{n}" for n in range(20001)]
-    got = sync(tab, {"copyId": "mine", "sharedFolder": "t1", "seen:amex": ids, "shared:t1:amex": ids})
-    assert got["result"]["wrote"] is False
-    assert "too large" in got["result"]["problems"][0]["problem"]
-    assert got["files"] == {}
+    call = f"async (s, root) => s.writeEntry(root, 'amex', {json.dumps(ids)}).then(() => 'written', (e) => e.message)"
+    got = run(tab, call, {})
+    assert "more than one history file can hold" in got["result"] and got["files"] == {}
 
 
-def test_a_copy_without_an_id_is_given_one_that_is_kept(tab):
-    got = sync(tab, {"sharedFolder": "t1", "seen:amex": ["a1"], "shared:t1:amex": ["a1"]})
-    made = got["store"]["copyId"]
-    assert len(made) >= 16 and list(got["files"]) == [f"{made}.json"]
-
-
-def test_note_and_forget_what_was_saved_into_the_folder(tab):
-    tab.goto(BASE)
-    tab.evaluate("sessionStorage.setItem('seed', JSON.stringify({'seen:amex': ['a1'], 'shared:t0:chase': ['c0']}))")
-    tab.goto(BASE)
-    got = tab.evaluate("""async () => {
-      const s = await import('/shared-history.js');
-      const token = await s.folderToken();
-      await s.noteShared('amex', ['a1'], token);
-      await s.noteShared('amex', ['a1', 'a2'], token);
-      const noted = { ...__store };
-      await s.forgetShared();
-      // A save that finishes after a new folder was chosen notes into the old token.
-      await s.noteShared('amex', ['late'], token);
-      return [token, noted, { ...__store }, await s.folderToken()];
-    }""")
-    token, noted, after, new_token = got
-    assert noted[f"shared:{token}:amex"] == ["a1", "a2"] and noted["shared:t0:chase"] == ["c0"]
-    assert new_token != token and after["seen:amex"] == ["a1"]
-    assert [k for k in after if k.startswith("shared:")] == [f"shared:{token}:amex"]
-    assert not [k for k in after if k.startswith(f"shared:{new_token}:")]
+def test_an_entry_written_here_is_learned_by_another_copy(tab):
+    mine = run(tab, write("amex", ["a1", "a2"]), STORE)
+    got = run(tab, READ, {"seen:amex": ["z9"]}, mine["files"])
+    assert got["store"]["seen:amex"] == ["z9", "a1", "a2"]
+    assert got["store"]["tax:amex"] == ["a1"]
 
 
 # -- Settings ----------------------------------------------------------------------
@@ -292,24 +250,6 @@ def test_a_problem_with_a_history_file_is_shown(stab):
     choose(stab, "Shared")
     stab.wait_for_function("document.getElementById('historyProblem').textContent !== ''")
     assert stab.inner_text("#historyProblem") == "bad.json in Statement Sweep History was not used: This is not a Statement Sweep history file."
-
-
-def test_choosing_a_folder_starts_afresh_on_what_is_known_to_be_in_it(stab):
-    settings(stab, {"seen:amex": ["a1"], "sharedFolder": "t0", "shared:t0:amex": ["a1"]})
-    choose(stab, "First")
-    stab.wait_for_function("__store.sharedFolder !== 't0'")
-    assert not [k for k in stab.evaluate("__store") if k.startswith("shared:")]
-    assert stab.evaluate("__store['seen:amex']") == ["a1"]
-    # Stored before the token changes, so a save that sees the new token saves into the new folder.
-    assert stab.evaluate("__sent") == [{"type": "syncHistory"}]
-
-
-def test_use_downloads_forgets_what_was_saved_into_the_folder(stab):
-    settings(stab, {"sharedFolder": "t0", "shared:t0:amex": ["a1"]})
-    choose(stab, "First")
-    stab.evaluate("() => { __store['shared:' + __store.sharedFolder + ':amex'] = ['a1']; window.__was = __store.sharedFolder; }")
-    stab.click("#useDownloads")
-    stab.wait_for_function("__store.sharedFolder !== __was && !Object.keys(__store).some((k) => k.startsWith('shared:'))")
 
 
 def test_sharing_is_on_with_a_folder_and_can_be_turned_off(stab):

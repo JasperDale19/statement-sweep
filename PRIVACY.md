@@ -74,15 +74,15 @@ Chase business cards are kept apart: each is added to only by its own site.
   #####1234). It never holds a page's text, your cookies, or what is in a
   document. Old logs are removed after 30 runs per site.
 
-- With a folder chosen and **History File** on (the default), a list of the
+- With a folder chosen and **History File** on (the default), lists of the
   documents saved into that folder: each one's identifier and date, and
-  which are tax forms, in a file of its own in the folder's
-  `Statement Sweep History` folder. It is there so Statement Sweep on another
-  computer using the same folder does not save them again. Never your folder
-  and file name settings or which sites are switched off. If the folder is
-  in iCloud Drive, Google Drive or another synced folder, this list is synced
-  and shared with it like your documents are, and stays there after the
-  extension is removed until you delete it.
+  which are tax forms, in small files in the folder's
+  `Statement Sweep History` folder. They are there so Statement Sweep on
+  another computer using the same folder does not save them again. Never
+  your folder and file name settings or which sites are switched off. If the
+  folder is in iCloud Drive, Google Drive or another synced folder, these
+  files are synced and shared with it like your documents are, and stay
+  there after the extension is removed until you delete them.
 
 All of this stays in your browser's storage and the folders above. Removing
 the extension deletes what is in your browser's storage. What it wrote to

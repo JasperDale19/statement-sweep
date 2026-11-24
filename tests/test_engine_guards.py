@@ -21,7 +21,15 @@ RECIPE = """(() => {
   const plan = window.__plan;
   const never = () => new Promise(() => {});
   const readList = () => (plan.hangList ? never() : { state: 'ok', docs: plan.docs, more: Boolean(plan.more) });
-  const fetchPdf = (doc) => (plan.hangFetch ? never() : { ok: true, base64: btoa((plan.bodies || {})[doc.id] || '%PDF-1.4 invented\\n%%EOF') });
+  const fetchPdf = async (doc) => {
+    if (plan.hangFetch) return never();
+    if (plan.switchFolder && !plan.switched) {
+      plan.switched = true;
+      const root = await navigator.storage.getDirectory();
+      await (await import('/folders.js')).setFolder('destination', await root.getDirectoryHandle(plan.switchFolder, { create: true }));
+    }
+    return { ok: true, base64: btoa((plan.bodies || {})[doc.id] || '%PDF-1.4 invented\\n%%EOF') };
+  };
   const nextView = () => (plan.hangNext ? never() : { moved: false });
   const clickDoc = (doc) => { setTimeout(() => window.__download(doc), 10); return { ok: true }; };
   globalThis.__sweep = { readList, fetchPdf, nextView, clickDoc };
@@ -159,56 +167,74 @@ def test_a_download_that_is_a_pdf_is_still_moved_and_marked_seen(engine):
 
 # -- the record shared through the chosen folder ---------------------------------
 
+HIST = "Chosen/Statement Sweep History/"
+
+
 def other_copy(ids):
     return json.dumps({"format": "statement-sweep-history", "version": 1, "sites": {"fake": ids},
                        "dates": {"fake": {i: "2026-09-28" for i in ids}}})
 
 
+def entries(got):
+    return {k[len(HIST):]: json.loads(v) for k, v in got["files"].items() if k.startswith(HIST) and k != HIST + "theirs.json" and k.endswith(".json") and v.startswith("{\"format")}
+
+
+def summary_of(got):
+    return next(v for k, v in got["files"].items() if re.match(r"Chosen/Statement Sweep/Logs/run-", k))
+
+
 def test_a_document_another_copy_saved_into_the_folder_is_not_saved_again(engine):
-    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")]},
-                            local={"copyId": "mine"}, shared={"theirs.json": other_copy(["f1"])})
+    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")]}, shared={"theirs.json": other_copy(["f1"])})
     assert got["board"]["fake"]["text"] == "1 new.", got["board"]
     assert pdfs == ["Chosen/Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"]
     assert sorted(got["local"]["seen:fake"]) == ["f1", "f2"]
-    # This copy's own file holds only what it saved into the folder.
-    mine = json.loads(got["files"]["Chosen/Statement Sweep History/mine.json"])
-    assert mine["sites"] == {"fake": ["f2"]}
-    assert got["files"]["Chosen/Statement Sweep History/theirs.json"] == other_copy(["f1"])
-    summary = next(v for k, v in got["files"].items() if re.match(r"Chosen/Statement Sweep/Logs/run-", k))
-    assert "History before the run: 1 other copy's file read, 1 document learned." in summary
-    assert "this copy's file written" in summary
+    # A new entry, holding only what this run saved into the folder.
+    assert [e["sites"] for e in entries(got).values()] == [{"fake": ["f2"]}]
+    assert got["files"][HIST + "theirs.json"] == other_copy(["f1"])
+    assert "History before the run: 1 history file read, 1 document learned." in summary_of(got)
+    assert "History entry written: 1 document(s)" in site
+
+
+def test_a_run_that_saves_nothing_writes_no_entry(engine):
+    got, _, pdfs = sweep(engine, {"docs": [doc("f1")]}, local={"seen:fake": ["f1"]})
+    assert pdfs == [] and entries(got) == {}
 
 
 def test_a_history_file_that_cannot_be_used_is_logged_and_the_run_goes_on(engine):
-    got, _, pdfs = sweep(engine, {"docs": [doc("f1")]}, local={"copyId": "mine"}, shared={"bad.json": "{nope"})
+    got, _, _ = sweep(engine, {"docs": [doc("f1")]}, shared={"bad.json": "{nope"})
     assert got["board"]["fake"]["text"] == "1 new."
-    summary = next(v for k, v in got["files"].items() if re.match(r"Chosen/Statement Sweep/Logs/run-", k))
-    assert "WARN" in summary and "History file bad.json not used: This is not a Statement Sweep history file. It could not be read." in summary
-    assert got["files"]["Chosen/Statement Sweep History/bad.json"] == "{nope"
+    assert "WARN   run: History file bad.json not used: This is not a Statement Sweep history file. It could not be read." in summary_of(got)
+    assert got["files"][HIST + "bad.json"] == "{nope"
 
 
 def test_with_sharing_off_the_folder_history_is_neither_read_nor_written(engine):
     got, _, _ = sweep(engine, {"docs": [doc("f1", date="2026-09-28")]},
-                      local={"copyId": "mine", "historySharingOff": True}, shared={"theirs.json": other_copy(["f1"])})
+                      local={"historySharingOff": True}, shared={"theirs.json": other_copy(["f1"])})
     assert got["board"]["fake"]["text"] == "1 new."
-    assert "Chosen/Statement Sweep History/mine.json" not in got["files"]
-    # Not learned from the other copy, so it was saved.
-    assert got["local"]["seen:fake"] == ["f1"]
-    # Still noted as in the folder, so turning sharing on later writes it.
-    assert [v for k, v in got["local"].items() if k.startswith("shared:") and k.endswith(":fake")] == [["f1"]]
+    assert entries(got) == {}
 
 
-def test_a_document_saved_in_downloads_instead_is_not_counted_as_in_the_folder(engine):
+def test_a_document_saved_in_downloads_instead_is_not_in_an_entry(engine):
     blocked = "Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"
-    got, _, pdfs = sweep(engine, {"docs": [doc("f1")], "blockPaths": [blocked], "finishDownloads": True}, local={"copyId": "mine"})
+    got, _, _ = sweep(engine, {"docs": [doc("f1")], "blockPaths": [blocked], "finishDownloads": True})
     assert got["board"]["fake"]["state"] == "ok" and "saved in Downloads" in got["board"]["fake"]["text"]
     assert got["local"]["seen:fake"] == ["f1"]
-    assert ["download", "Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"] in got["events"]
-    assert not [k for k in got["local"] if k.startswith("shared:")]
-    assert "Chosen/Statement Sweep History/mine.json" not in got["files"]
+    assert ["download", blocked] in got["events"]
+    assert entries(got) == {}
 
 
-def test_settings_can_ask_for_a_sync_and_hears_what_it_did(engine):
+def test_a_folder_chosen_during_a_sweep_is_used_from_the_next_one(engine):
+    # Settings switches to another folder while the first document is saving.
+    got, _, pdfs = sweep(engine, {"docs": [doc("f1"), doc("f2", date="2026-09-28")], "switchFolder": "Other"})
+    assert got["board"]["fake"]["text"] == "2 new.", got["board"]
+    assert sorted(pdfs) == ["Chosen/Statement Sweep/Fake Bank/2026-09-28 Fake Statement.pdf", "Chosen/Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"]
+    # The entry is in the folder the documents went to, and nothing is in the new one.
+    assert [e["sites"] for e in entries(got).values()] == [{"fake": ["f1", "f2"]}]
+    # Only the run's logs follow the folder chosen now, as they always have.
+    assert not [k for k in got["files"] if k.startswith("Other/") and "/Logs/" not in k]
+
+
+def test_settings_can_ask_for_a_sync_and_hears_what_it_learned(engine):
     got = engine.evaluate("""async (text) => {
       const f = await import('/folders.js');
       const root = await navigator.storage.getDirectory();

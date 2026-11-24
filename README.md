@@ -94,12 +94,13 @@ names or sends everything to any folder you choose. It also switches sites
 off and turns on card offers.
 
 **Using more than one computer.** Choose the same synced folder (in iCloud
-Drive or Google Drive, say) in Statement Sweep on each computer. Each one
-keeps a list of the documents it saved there in that folder's
-`Statement Sweep History` folder, and reads the others' lists before and
-after every sync, so a statement one computer saved is not saved again by
-another. Sites you added with Add This Site are not shared. **History File**
-in Settings turns this off.
+Drive or Google Drive, say) in Statement Sweep on each computer. Each site
+that saves documents into it adds a small file listing them to that
+folder's `Statement Sweep History` folder, and every computer reads those
+files before each sync, so a statement one computer saved is not saved
+again by another. Documents saved before the folder was chosen are not
+listed, so the first sync into it saves them there. Sites you added with Add
+This Site are not shared. **History File** in Settings turns this off.
 
 ## Card offers
 

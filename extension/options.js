@@ -3,7 +3,7 @@ import { DEFAULT_NAMING, checkPattern, normalise, pathFor } from "./naming.js";
 import { INBOX, forgetFolders, getFolder, setFolder, withinChosen } from "./folders.js";
 import { MAX_FILE_BYTES, exportHistory, fileNameFor, importHistory, planImport, readHistory, recordedCounts } from "./history.js";
 import { STORED_PREFIX, storedText } from "./log.js";
-import { SHARED_DIR, SHARING_OFF, forgetShared } from "./shared-history.js";
+import { SHARED_DIR, SHARING_OFF } from "./shared-history.js";
 
 // The sites you added have their own file name patterns too.
 await loadSites();
@@ -140,9 +140,6 @@ $("chooseDest").addEventListener("click", async () => {
   const handle = await pickFolder({ id: "sweep-destination", startIn: "documents" });
   if (!handle) return;
   await setFolder("destination", handle);
-  // Nothing saved so far is known to be in this folder. What this copy saved
-  // into it before is read back from its own history file (shareNow).
-  await forgetShared();
   destination = handle;
   await makeInbox();
   drawLocation();
@@ -152,7 +149,7 @@ $("chooseDest").addEventListener("click", async () => {
 
 // Takes in now what other copies saved into the chosen folder (the engine
 // does it, background.js), so what is due is right before the first run. An
-// engine that does not answer, or is mid-run, leaves it for the run to do.
+// engine that does not answer, or is mid-run, leaves it for the next run.
 async function shareNow() {
   let r;
   try { r = await chrome.runtime.sendMessage({ type: "syncHistory" }); } catch (e) { return; }
@@ -183,7 +180,6 @@ $("allowInbox").addEventListener("click", async () => {
 $("useDownloads").addEventListener("click", async () => {
   locationProblem("");
   await forgetFolders();
-  await forgetShared();
   destination = null;
   inbox = null;
   drawLocation();
