@@ -12,7 +12,7 @@ import { backfillFor, documentDate, folderKey, isDue, isTaxDocument, keysFor, lo
 import { amount, cleanUrl, errorText, makeLogs } from "./log.js";
 import { OFFERS_WAIT, hasOffers, makeOffers, offersWanted, offersWords } from "./offers.js";
 import { addFound, estimateNew, foundKey, foundOf, siteProgress } from "./progress.js";
-import { FolderUnavailable, Stopped, factsOf, fileFacts, reconcile, sharingOn, stillThere, writeChecked, writeEntry } from "./shared-history.js";
+import { FolderUnavailable, Stopped, factsOf, reconcile, sharingOn, stillThere, verified, writeChecked, writeEntry } from "./shared-history.js";
 
 // The run's logs (log.js): what each site did and why it stopped, written to
 // each site's Logs folder as the run goes. `note` adds one line for a site.
@@ -171,6 +171,51 @@ async function readFolder(when, stopped) {
   }
 }
 
+// Documents saved into the shared folder and not yet in an entry there,
+// `pending:<site>` = [{id, facts}], kept as each is saved and before it is
+// marked as saved. If the browser closes mid-run, or the entry cannot be
+// written, the next run writes it (publishPending), so another computer
+// still learns of them.
+const pendingKey = (id) => `pending:${id}`;
+const goodClaim = (c) => Boolean(c) && typeof c.id === "string" && c.facts && typeof c.facts.path === "string"
+  && Number.isSafeInteger(c.facts.size) && typeof c.facts.sha256 === "string";
+async function pendingOf(siteId) {
+  const kept = (await chrome.storage.local.get(pendingKey(siteId)))[pendingKey(siteId)];
+  return Array.isArray(kept) ? kept.filter(goodClaim) : [];
+}
+async function journal(siteId, claim) {
+  await chrome.storage.local.set({ [pendingKey(siteId)]: [...(await pendingOf(siteId)).filter((c) => c.id !== claim.id), claim] });
+}
+async function unjournal(siteId, ids) {
+  const left = (await pendingOf(siteId)).filter((c) => !ids.includes(c.id));
+  if (left.length) await chrome.storage.local.set({ [pendingKey(siteId)]: left });
+  else await chrome.storage.local.remove(pendingKey(siteId));
+}
+// Entries a run before this one did not get to write, for documents still
+// in the folder as they were saved. One whose file is not there, or holds
+// other bytes, is let go: the folder chosen now does not hold it.
+async function publishPending() {
+  if (!folderNow) return;
+  const all = await chrome.storage.local.get(null);
+  for (const key of Object.keys(all).filter((k) => k.startsWith("pending:"))) {
+    const siteId = key.slice("pending:".length);
+    const provider = providerOf(siteId);
+    const claims = await pendingOf(siteId);
+    if (!provider || !claims.length) { await chrome.storage.local.remove(key); continue; }
+    const ready = [], gone = [];
+    for (const claim of claims) {
+      try {
+        ((await verified(folderNow.handle, claim.facts)) ? ready : gone).push(claim);
+      } catch (e) { /* could not be read now: kept for the next run */ }
+    }
+    if (gone.length) await unjournal(siteId, gone.map((c) => c.id));
+    if (ready.length) {
+      logs.runLine(`${provider.name}: ${ready.length} document(s) saved in a run before this one are written to the folder's history now.`);
+      await writeSiteEntry(provider, { destination: folderNow.handle, saved: ready });
+    }
+  }
+}
+
 // A site's new entry: the documents it saved into `entry.destination`, the
 // folder its sweep used from its start, then added to what is kept of the
 // folder. Never throws. Sites you added are not shared: their ids are this
@@ -181,6 +226,7 @@ async function writeSiteEntry(provider, entry) {
   try {
     written = await within(ENTRY_WAIT_MS, "Your folder did not answer within a minute.", () => writeEntry(entry.destination, provider.id, entry.saved));
     if (written) note(provider, `History entry written: ${entry.saved.length} document(s) in ${written.name}.`);
+    if (written) await unjournal(provider.id, entry.saved.map((c) => c.id));
   } catch (e) {
     note(provider, `History entry not written, so another computer may save these ${entry.saved.length} document(s) again: ${errorText(e)}`, "WARN");
   }
@@ -189,14 +235,15 @@ async function writeSiteEntry(provider, entry) {
     if (!(await folderIs(entry.destination))) return;
     const site = (folderNow.record[provider.id] = folderNow.record[provider.id] || emptySite());
     for (const { id, facts } of entry.saved) {
-      const now = await fileFacts(entry.destination, facts.path).catch(() => null);
-      // Not as it was saved: left out, and found by the next read of the folder.
-      if (!now || now.size !== facts.size) continue;
+      // Read back, so what is kept of the file is what is in it now. Not as
+      // it was saved: left out, and judged by the next read of the folder.
+      const now = await verified(entry.destination, facts).catch(() => null);
+      if (!now) continue;
       if (!site.ids.includes(id)) site.ids.push(id);
       site.paths[id] = facts.path;
       if (written.dates[id]) site.dates[id] = written.dates[id];
       if (written.tax.includes(id) && !site.tax.includes(id)) site.tax.push(id);
-      folderNow.files[facts.path] = { size: now.size, mtime: now.mtime, sha256: facts.sha256 };
+      folderNow.files[facts.path] = now;
     }
     await setFolder(FOLDER_STATE, { handle: folderNow.handle, files: folderNow.files });
     await chrome.storage.local.set({ [folderKey(provider.id)]: forPopup(site) });
@@ -1233,20 +1280,25 @@ async function sweep(provider, together = false, entry = { destination: null, sa
         continue;
       }
       inARow = 0;
+      if (result.inFolder && sharing && !provider.added) {
+        // Its size and SHA-256, from the bytes saved, for other computers to
+        // check it by. Kept (journal) before the document is marked as saved,
+        // so a run cut short still tells them. One left out is saved again by them.
+        const facts = await factsOf(result.inFolder, result.payload).catch((e) => {
+          note(provider, `Document ${doc.id} is not listed for other computers: ${errorText(e)}`, "WARN");
+          return null;
+        });
+        if (facts) {
+          const claim = { id: doc.id, facts };
+          await journal(provider.id, claim);
+          entry.saved.push(claim);
+        }
+      }
       seen.add(doc.id);
       // Joined with what is stored now, so a history imported during this
       // sweep is kept rather than written over by the list read at its start.
       for (const id of (await chrome.storage.local.get(key))[key] || []) seen.add(id);
       await chrome.storage.local.set({ [key]: [...seen] });
-      if (result.inFolder && sharing) {
-        // Its size and SHA-256, from the bytes saved, for other computers to
-        // check it by. One left out of the entry is saved again by them.
-        const facts = await factsOf(result.inFolder, result.payload).catch((e) => {
-          note(provider, `Document ${doc.id} is not listed for other computers: ${errorText(e)}`, "WARN");
-          return null;
-        });
-        if (facts) entry.saved.push({ id: doc.id, facts });
-      }
       await remember(provider, [doc], true);
       count += 1;
       logs.counted(provider, "saved");
@@ -1548,6 +1600,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
         for (const provider of chosen) await say(provider.id, "bad", folder.state === "stopped" ? `Not reached. ${STOPPED}` : `Nothing was saved. ${folder.text}`);
         return;
       }
+      await publishPending().catch((e) => logs.runLine(`Documents saved before were not written to the folder's history: ${errorText(e)}`, "WARN"));
       await whyChosen(message, off).catch((e) => logs.runLine(`Could not say why each site was chosen: ${errorText(e)}`, "WARN"));
       // Get New Documents starts every site at once, each in a tab of its own;
       // Run starts the one site, as before.

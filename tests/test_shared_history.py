@@ -291,6 +291,24 @@ def test_a_document_changed_since_the_folder_was_read_is_no_longer_there(tab):
     assert run(tab, still(change), {}, {"x.json": entry()})["result"] == []
 
 
+# -- what is kept of a file is what was read from it --------------------------------
+
+VERIFY = "async (s, root) => s.verified(root, %s)"
+
+
+@pytest.mark.parametrize("pdfs, there, why", [
+    ({PATH_A: PDF_A}, True, "the bytes claimed"),
+    ({PATH_A: PDF_C}, False, "other bytes of the same size, put there since"),
+    ({PATH_A: PDF_B}, False, "another size"),
+    ({}, False, "not there"),
+])
+def test_a_file_is_read_before_anything_is_kept_of_it(tab, pdfs, there, why):
+    got = run(tab, with_pdfs(pdfs, VERIFY % json.dumps(facts(PATH_A, PDF_A))))["result"]
+    assert (got is not None) == there, why
+    if there:
+        assert got["sha256"] == facts(PATH_A, PDF_A)["sha256"] and got["size"] == len(PDF_A) and got["mtime"] > 0
+
+
 # -- writing -----------------------------------------------------------------------
 
 def write(saved, when="2026-11-24T14:05:09"):

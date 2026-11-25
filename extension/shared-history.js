@@ -219,11 +219,15 @@ export async function stillThere(root, folder, siteId, ids, { stallMs = STALL_MS
   return there;
 }
 
-// The size and time of last change of the file at `path` in `root`, or null
-// when it is not there.
-export async function fileFacts(root, path, { stallMs = STALL_MS } = {}) {
-  const file = await filesOf(root, stallMs)(path);
-  return file ? { size: file.size, mtime: file.lastModified } : null;
+// The file `facts` names, read now: its size, time of last change and
+// SHA-256 if it is in `root` with those bytes, or null when it is not there
+// or holds other bytes. What is kept of a file is only ever what was read
+// from it. Throws FolderUnavailable if the folder cannot be read.
+export async function verified(root, facts, { stallMs = STALL_MS } = {}) {
+  const file = await filesOf(root, stallMs)(facts.path);
+  if (!file || file.size !== facts.size) return null;
+  const sum = await reading(facts.path, stallMs, () => sha256(file));
+  return sum === facts.sha256 ? { size: file.size, mtime: file.lastModified, sha256: sum } : null;
 }
 
 const pad = (n) => String(n).padStart(2, "0");

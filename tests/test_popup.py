@@ -515,3 +515,14 @@ def test_ticks_you_chose_are_kept_when_the_folder_is_read(tab):
     tab.wait_for_function("document.getElementById('folderLine').textContent.startsWith('In sync')")
     assert tab.locator("li", has_text="American Express").locator("input[type=checkbox]").is_checked()
     assert not tab.locator("li", has_text="Alpaca").locator("input[type=checkbox]").is_checked()
+
+
+def test_a_folder_read_during_a_sync_moves_the_ticks_once_the_sync_is_done(tab):
+    show(tab, board={"alpaca": st("working", "Looking…")})
+    tab.evaluate("""(theirs) => { __local['folder:amex'] = theirs; __session.folderSync = {state: 'ok', documents: 10, entries: 1, at: 9, name: 'S'};
+      __listeners.forEach(f => f({type: 'board'})); }""", THEIRS)
+    tab.wait_for_function("document.getElementById('folderLine').textContent.startsWith('In sync')")
+    # The sync ends: the ticks now follow what the folder holds.
+    tab.evaluate("__session.board = {}; __listeners.forEach(f => f({type: 'board'}))")
+    tab.wait_for_function("document.getElementById('go').textContent.startsWith('Get New Documents')")
+    assert not tab.locator("li", has_text="American Express").locator("input[type=checkbox]").is_checked()

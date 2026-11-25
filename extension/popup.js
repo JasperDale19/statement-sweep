@@ -419,8 +419,9 @@ async function draw() {
   const folderWords = folderLine(folderSync);
   // The folder was read since the ticks were set: what is due has changed.
   const folderAt = folderSync && folderSync.state === "ok" ? String(folderSync.at) : "";
+  // While a sync goes the ticks wait, and follow it once the sync is done.
   if (!picked || (!pickedByYou && !busyIn(board) && folderAt && folderAt !== folderSeen)) picked = new Set(targetsOf(board, off));
-  if (folderAt) folderSeen = folderAt;
+  if (folderAt && !busyIn(board)) folderSeen = folderAt;
   const line = document.getElementById("folderLine");
   line.hidden = !folderWords;
   line.textContent = folderWords;

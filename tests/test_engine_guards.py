@@ -329,6 +329,25 @@ def test_a_folder_chosen_during_a_sweep_is_used_from_the_next_one(engine):
     assert not [k for k in got["files"] if k.startswith("Other/") and "/Logs/" not in k]
 
 
+def test_what_is_saved_is_noted_until_its_entry_is_written(engine):
+    got, _, _ = sweep(engine, {"docs": [doc("f1")]})
+    assert len(written(got)[0]) == 1
+    # Written, so nothing is left waiting.
+    assert "pending:fake" not in got["local"]
+
+
+def test_documents_a_run_cut_short_saved_are_written_to_the_history_by_the_next(engine):
+    # Saved and marked as saved, and the browser closed before the entry was written.
+    waiting = [{"id": "f1", "facts": facts(F1)}, {"id": "gone", "facts": facts("Statement Sweep/Fake Bank/never.pdf")}]
+    got, _, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28")]},
+                         local={"seen:fake": ["f1", "gone"], "dates:fake": {"f1": "2026-09-28"}, "pending:fake": waiting}, shared={F1: PDF})
+    docs, _ = written(got)
+    assert [e["files"] for e in docs] == [{"fake": {"f1": facts(F1)}}]
+    assert "pending:fake" not in got["local"]
+    assert got["local"]["folder:fake"]["ids"] == ["f1"]
+    assert "1 document(s) saved in a run before this one are written to the folder's history now." in summary_of(got)
+
+
 def test_a_folder_changed_while_the_shared_one_was_read_saves_nothing(engine):
     # What was read is the old folder's record, so it must not decide for the new one.
     got, _, pdfs = sweep(engine, {"docs": [doc("f1")], "switchWhileChecking": "Other"}, shared={"theirs.json": other_copy(["f9"])})

@@ -45,8 +45,9 @@ Chase business cards are kept apart: each is added to only by its own site.
 - The documents it saves, in your Downloads folder or a folder you choose.
 - A list of which documents it has already saved, so they are not saved twice.
   With a shared folder, also what that folder holds (the same details as its
-  history files, below) and the size, date and fingerprint of its files, so
-  they are not read again each time.
+  history files, below), the size, date and fingerprint of its files, so
+  they are not read again each time, and a note of documents just saved
+  there until its history file is written.
   This holds each document's date and an identifier for it, which for some
   sites includes an account number, and notes which documents are tax forms.
 - From those dates, how often each site sends a document, so it can say which
