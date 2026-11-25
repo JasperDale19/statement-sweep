@@ -89,7 +89,12 @@ export async function factsOf(path, blob) {
 // Statement Sweep, stops the reading.
 async function readClaims(root, { stopped, ms }) {
   const result = { claims: {}, checked: {}, read: [], unknown: [], problems: [] };
-  const dir = await reading(SHARED_DIR, ms, () => root.getDirectoryHandle(SHARED_DIR)).catch((e) => { if (notThere(e)) return null; throw e; });
+  // Only a history folder that is not there holds nothing. Something else of
+  // its name is a folder that cannot be read.
+  const dir = await reading(SHARED_DIR, ms, () => root.getDirectoryHandle(SHARED_DIR)).catch((e) => {
+    if (e && e.name === "NotFoundError") return null;
+    throw e instanceof FolderUnavailable ? e : unavailable(SHARED_DIR, e);
+  });
   if (!dir) return result;
   const handles = await reading(SHARED_DIR, ms, async () => {
     const found = [];
@@ -133,13 +138,13 @@ async function readClaims(root, { stopped, ms }) {
   return result;
 }
 
-const emptySite = () => ({ ids: [], dates: {}, tax: [], paths: {}, checked: "" });
+const emptySite = () => ({ ids: [], dates: {}, tax: [], paths: {}, sums: {}, checked: "" });
 
 // The folder's record, from its entries and its files. `known` is the files
 // hashed before, {path: {size, mtime, sha256}}; a file unchanged since is not
 // read again. `progress(done, total)` is called as documents are settled, and
 // `stopped()` asked between them. Answers { record: {site: {ids, dates, tax,
-// paths: {id: path}, checked}}, files, documents, entries, hashed, unknown,
+// paths: {id: path}, sums: {id: SHA-256}, checked}}, files, documents, entries, hashed, unknown,
 // problems }, or throws FolderUnavailable or Stopped. Changes nothing.
 export async function reconcile(root, { known = {}, progress = () => {}, stopped = () => false, stallMs = STALL_MS } = {}) {
   const claims = await readClaims(root, { stopped, ms: stallMs });
@@ -149,6 +154,9 @@ export async function reconcile(root, { known = {}, progress = () => {}, stopped
     const r = (record[site] = record[site] || emptySite());
     r.ids.push(doc);
     r.paths[doc] = facts.path;
+    // The SHA-256 this document was found by, so the file at its path is
+    // only ever taken for it while it holds these bytes (stillThere).
+    r.sums[doc] = facts.sha256;
     if (claim.date) r.dates[doc] = claim.date;
     if (claim.tax) r.tax.push(doc);
   };
@@ -212,7 +220,9 @@ export async function stillThere(root, folder, siteId, ids, { stallMs = STALL_MS
   for (const id of ids) {
     const path = site.paths[id];
     const k = path && folder.files[path];
-    if (!k) continue;
+    // What was last read at the path must be this document's own bytes: two
+    // entries can name one path for different documents.
+    if (!k || k.sha256 !== site.sums[id]) continue;
     const file = await fileAt(path);
     if (file && file.size === k.size && file.lastModified === k.mtime) there.add(id);
   }

@@ -134,7 +134,8 @@ def test_a_document_whose_file_is_there_as_claimed_is_in_the_folders_record(tab)
     got = run(tab, with_pdfs({PATH_A: PDF_A, PATH_B: PDF_B}, RECONCILE), {"seen:amex": ["a1"]}, {"x.json": text})
     r = got["result"]
     assert r["record"] == {"amex": {"ids": ["o1", "o2"], "dates": {"o1": "2026-10-28", "o2": "2026-09-28"}, "tax": ["o2"],
-                                    "paths": {"o1": PATH_A, "o2": PATH_B}, "checked": ""}}
+                                    "paths": {"o1": PATH_A, "o2": PATH_B},
+                                    "sums": {"o1": facts(PATH_A, PDF_A)["sha256"], "o2": facts(PATH_B, PDF_B)["sha256"]}, "checked": ""}}
     assert r["documents"] == 2 and r["entries"] == 1 and r["hashed"] == 2
     assert {k: v["sha256"] for k, v in r["files"].items()} == {PATH_A: facts(PATH_A, PDF_A)["sha256"], PATH_B: facts(PATH_B, PDF_B)["sha256"]}
     # Reading changes nothing: not this copy's record, and not the entry.
@@ -182,7 +183,7 @@ def test_any_entry_that_names_where_the_file_is_will_do(tab):
 def test_the_latest_day_a_site_was_checked_is_in_the_record(tab):
     checked = lambda day: json.dumps({"format": "statement-sweep-history", "version": 1, "sites": {}, "checked": {"chase": day}})
     got = run(tab, RECONCILE, {}, {"a.json": checked("2026-11-20"), "b.json": checked("2026-11-22"), "c.json": checked("2026-11-21")})
-    assert got["result"]["record"] == {"chase": {"ids": [], "dates": {}, "tax": [], "paths": {}, "checked": "2026-11-22"}}
+    assert got["result"]["record"] == {"chase": {"ids": [], "dates": {}, "tax": [], "paths": {}, "sums": {}, "checked": "2026-11-22"}}
     assert got["result"]["entries"] == 3
 
 
@@ -291,6 +292,30 @@ def test_a_document_changed_since_the_folder_was_read_is_no_longer_there(tab):
     assert run(tab, still(change), {}, {"x.json": entry()})["result"] == []
 
 
+def test_two_documents_claimed_at_one_path_are_never_both_taken_for_its_file(tab):
+    # Two entries name one path for different documents; the file holds the first's bytes.
+    one = entry({"amex": {"o1": facts(PATH_A, PDF_A)}})
+    two = entry({"amex": {"o2": facts(PATH_A, PDF_C)}}, sites={"amex": ["o2"]}, dates={})
+    call = with_pdfs({PATH_A: PDF_A}, f"""async (s, root) => {{
+      const folder = await s.reconcile(root);
+      // As if both had settled, each against a different version of the file.
+      folder.record.amex.paths.o2 = {json.dumps(PATH_A)};
+      folder.record.amex.sums.o2 = {json.dumps(facts(PATH_A, PDF_C)["sha256"])};
+      return [folder.record.amex.ids, [...await s.stillThere(root, folder, 'amex', ['o1', 'o2'])]];
+    }}""")
+    ids, there = run(tab, call, {}, {"a.json": one, "b.json": two})["result"]
+    assert ids == ["o1"] and there == ["o1"]
+
+
+def test_something_else_named_as_the_history_folder_is_a_folder_that_cannot_be_read(tab):
+    call = f"""async (s, root) => {{
+      const w = await (await root.getFileHandle('Statement Sweep History', {{ create: true }})).createWritable(); await w.write('x'); await w.close();
+      return ({SAFE})(s.reconcile(root));
+    }}"""
+    got = run(tab, call)["result"]
+    assert got["threw"] == "FolderUnavailable" and "Nothing was saved" in got["says"]
+
+
 # -- what is kept of a file is what was read from it --------------------------------
 
 VERIFY = "async (s, root) => s.verified(root, %s)"
@@ -379,7 +404,8 @@ def test_what_one_copy_writes_another_reads_as_the_folders_record(tab):
       await s.writeChecked(root, {{ amex: '2026-11-24' }});
     }}"""), STORE)
     got = run(tab, with_pdfs({PATH_A: PDF_A}, RECONCILE), {"seen:amex": ["z9"]}, mine["files"])
-    assert got["result"]["record"]["amex"] == {"ids": ["a1"], "dates": {"a1": "2026-10-28"}, "tax": ["a1"], "paths": {"a1": PATH_A}, "checked": "2026-11-24"}
+    assert got["result"]["record"]["amex"] == {"ids": ["a1"], "dates": {"a1": "2026-10-28"}, "tax": ["a1"], "paths": {"a1": PATH_A},
+                                               "sums": {"a1": facts(PATH_A, PDF_A)["sha256"]}, "checked": "2026-11-24"}
     assert got["store"] == {"seen:amex": ["z9"]}
 
 

@@ -94,7 +94,7 @@ function folderStep(work) {
   folderSteps = next.catch(() => {});
   return next;
 }
-const emptySite = () => ({ ids: [], dates: {}, tax: [], paths: {}, checked: "" });
+const emptySite = () => ({ ids: [], dates: {}, tax: [], paths: {}, sums: {}, checked: "" });
 const forPopup = ({ ids, dates, tax, checked }) => ({ ids, dates, tax, checked });
 async function sayFolder(state) {
   await chrome.storage.session.set({ [FOLDER_SYNC]: state }).catch(() => {});
@@ -241,6 +241,7 @@ async function writeSiteEntry(provider, entry) {
       if (!now) continue;
       if (!site.ids.includes(id)) site.ids.push(id);
       site.paths[id] = facts.path;
+      site.sums[id] = now.sha256;
       if (written.dates[id]) site.dates[id] = written.dates[id];
       if (written.tax.includes(id) && !site.tax.includes(id)) site.tax.push(id);
       folderNow.files[facts.path] = now;
