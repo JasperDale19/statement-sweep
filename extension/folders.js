@@ -84,8 +84,9 @@ function claim(work) {
 //
 // `reuseSame`, for documents: a file already there under the name, or one of
 // its "(1)", "(2)" names, with exactly these bytes is the same document, saved
-// before by this computer or another. It is left as it is and its path
-// answered, so saving a document twice never makes a second copy. A save
+// before by this computer or another. So is a file of the same folder under
+// any other name. It is left as it is and its path answered, so saving a
+// document twice never makes a second copy. A save
 // begun under the name and never finished left it empty; that name is used.
 async function sameBytes(file, blob) {
   if (file.size !== blob.size) return false;
@@ -104,6 +105,28 @@ async function sameBytes(file, blob) {
 // is then taken over.
 const underWay = new Map();
 export class StillSaving extends Error {}
+
+// A file of this folder with exactly these bytes under any other name: the
+// same document as another computer, or an older file name pattern, named it.
+// Only files of the same length are read. Looked for among the files beside
+// the wanted name, not in other folders.
+async function sameElsewhere(dir, name, blob) {
+  if (!blob.size) return null;
+  const names = [];
+  for await (const [leaf, handle] of dir.entries()) if (handle.kind === "file" && leaf !== name) names.push([leaf, handle]);
+  names.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const [leaf, handle] of names) {
+    let file;
+    try {
+      file = await handle.getFile();
+    } catch (e) {
+      if (e.name === "NotFoundError") continue;
+      throw e;
+    }
+    if (await sameBytes(file, blob)) return leaf;
+  }
+  return null;
+}
 
 async function nameOrSame(dir, name, blob, keyOf) {
   const dot = name.lastIndexOf(".");
@@ -131,7 +154,7 @@ async function nameOrSame(dir, name, blob, keyOf) {
   throw new Error("Too many files share that name.");
 }
 
-export async function writeFile(root, path, blob, { replace = false, reuseSame = false } = {}) {
+export async function writeFile(root, path, blob, { replace = false, reuseSame = false, anyName = true } = {}) {
   const parts = path.split("/");
   const fileName = parts.pop();
   let dir = root;
@@ -141,6 +164,9 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
     if (reuseSame && !replace) {
       const found = await nameOrSame(dir, fileName, blob, keyOf);
       if (found.same) return [found.name, null];
+      // `anyName: false`, for a file being renamed: its old name is beside it.
+      const elsewhere = anyName ? await sameElsewhere(dir, fileName, blob) : null;
+      if (elsewhere) return [elsewhere, null];
       underWay.set(keyOf(found.name), blob.size);
       return [found.name, await dir.getFileHandle(found.name, { create: true })];
     }

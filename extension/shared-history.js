@@ -25,6 +25,7 @@
 // Only a file that is plainly not there counts as not there.
 import { FORMAT, MAX_FILE_BYTES, MAX_IDS, VERSION, readHistory } from "./history.js";
 import { writeFile } from "./folders.js";
+import { fromOwnName, pathFor } from "./naming.js";
 
 export const SHARED_DIR = "Statement Sweep History";
 export const SHARING_OFF = "historySharingOff";
@@ -127,6 +128,7 @@ async function readClaims(root, { stopped, ms }) {
       for (const [doc, facts] of Object.entries(byDoc)) {
         const claim = (docs[doc] = docs[doc] || { candidates: [], date: "", tax: false });
         claim.candidates.push(facts);
+        if (claim.title === undefined && typeof facts.title === "string") claim.title = facts.title;
         if (!claim.date && typeof dates[doc] === "string") claim.date = dates[doc];
         if (tax.includes(doc)) claim.tax = true;
       }
@@ -159,6 +161,8 @@ export async function reconcile(root, { known = {}, progress = () => {}, stopped
     r.sums[doc] = facts.sha256;
     if (claim.date) r.dates[doc] = claim.date;
     if (claim.tax) r.tax.push(doc);
+    // Its title, when an entry gives it: what renaming its file goes by.
+    if (typeof claim.title === "string") (r.titles = r.titles || {})[doc] = claim.title;
   };
   const all = Object.entries(claims.claims).flatMap(([site, docs]) => Object.entries(docs).map(([doc, claim]) => ({ site, doc, claim })));
   let done = 0;
@@ -252,15 +256,17 @@ async function newEntry(root, file, now) {
 // saved into it. Answers the entry's name and what it holds for the folder's
 // record, { name, dates, tax }, or null with nothing to write. Throws when
 // the entry cannot be written.
-export async function writeEntry(root, siteId, saved, now = new Date()) {
+export async function writeEntry(root, siteId, saved, now = new Date(), known = {}) {
   const byDoc = new Map();
   for (const s of saved) if (s && typeof s.id === "string" && s.id && s.facts) byDoc.set(s.id, s.facts);
   const docs = [...byDoc.keys()];
   if (!docs.length) return null;
   if (docs.length > MAX_IDS) throw new Error(`${docs.length} documents are more than one history file can hold.`);
   const kept = await local().get([`dates:${siteId}`, `tax:${siteId}`]);
-  const dates = isObject(kept[`dates:${siteId}`]) ? kept[`dates:${siteId}`] : {};
-  const tax = Array.isArray(kept[`tax:${siteId}`]) ? kept[`tax:${siteId}`] : [];
+  // `known`, { dates, tax }: what the folder's record says of them, for
+  // documents another computer saved, which this copy keeps no dates of.
+  const dates = { ...(known.dates || {}), ...(isObject(kept[`dates:${siteId}`]) ? kept[`dates:${siteId}`] : {}) };
+  const tax = [...(known.tax || []), ...(Array.isArray(kept[`tax:${siteId}`]) ? kept[`tax:${siteId}`] : [])];
   const file = { format: FORMAT, version: VERSION, exportedAt: now.toISOString(), sites: { [siteId]: docs } };
   const dated = Object.fromEntries(docs.filter((doc) => typeof dates[doc] === "string").map((doc) => [doc, dates[doc]]));
   if (Object.keys(dated).length) file.dates = { [siteId]: dated };
@@ -275,4 +281,108 @@ export async function writeEntry(root, siteId, saved, now = new Date()) {
 export async function writeChecked(root, days, now = new Date()) {
   if (!Object.keys(days).length) return null;
   return newEntry(root, { format: FORMAT, version: VERSION, exportedAt: now.toISOString(), sites: {}, checked: days }, now);
+}
+
+// -- renaming what is saved to the file name settings of now -------------------
+//
+// Asked for in Settings, never done by itself. A document's new name is made
+// from its date and its title: the title an entry gives, or the one its file
+// name says when the site's own pattern made that name. A document whose
+// title cannot be known is left as it is.
+
+// `to` itself, or `to` with the " (n)" a second file of its name is given.
+const isOrNumbered = (to, from) => {
+  if (to === from) return true;
+  const dot = to.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [to.slice(0, dot), to.slice(dot)] : [to, ""];
+  return from.startsWith(`${stem} (`) && from.endsWith(`)${ext}`) && /^\d+$/.test(from.slice(stem.length + 2, from.length - ext.length - 1));
+};
+
+// What renaming would do, from the folder's `record`: { moves: [{site, id,
+// from, to, title, date}], alone } where `alone` counts the documents whose
+// title or date cannot be known. Changes nothing.
+export function renamePlan(record, providers, naming) {
+  const moves = [];
+  let alone = 0;
+  for (const provider of providers) {
+    const site = record[provider.id];
+    if (!site || provider.added) continue;
+    for (const id of site.ids) {
+      const from = site.paths[id];
+      const parsed = fromOwnName(provider, from.split("/").pop());
+      const title = site.titles && typeof site.titles[id] === "string" ? site.titles[id] : parsed ? parsed.title : undefined;
+      const date = site.dates[id] || (parsed ? parsed.date : "");
+      if (title === undefined || !date) { alone += 1; continue; }
+      const to = pathFor(naming, provider, { id, date, title });
+      if (!isOrNumbered(to, from)) moves.push({ site: provider.id, id, from, to, title, date });
+    }
+  }
+  return { moves, alone };
+}
+
+const writing = (what, ms, work) => {
+  let timer;
+  const failed = (e) => new FolderUnavailable(`Your folder could not be written (${what}${e && e.name ? `: ${e.name}` : " did not answer"}). The files renamed so far are kept. Rename again to go on.`);
+  const limit = new Promise((resolve, reject) => { timer = setTimeout(() => reject(failed()), ms); });
+  const done = Promise.resolve().then(work).catch((e) => { throw e instanceof FolderUnavailable ? e : failed(e); });
+  return Promise.race([done, limit]).finally(() => clearTimeout(timer));
+};
+
+// Carries out the `moves` of one site (renamePlan), against `folder`, the
+// read of `root` they were planned from ({record, files}). Each file is read
+// and must still hold the bytes it was found by; it is written under its new
+// name, never over another document, and read back. Then one new entry lists
+// the new places, and only then are the old files removed. A file that
+// changed since the read, or is claimed by a document not being moved, is
+// left where it is. If the folder stops answering part way, what was
+// written so far is still listed and its old files removed, and
+// FolderUnavailable is thrown. Answers { renamed, skipped, entry }.
+export async function renameSite(root, folder, siteId, moves, { now = new Date(), stopped = () => false, progress = () => {}, stallMs = STALL_MS } = {}) {
+  const site = (folder.record || {})[siteId];
+  const fileAt = filesOf(root, stallMs);
+  const landed = [];
+  let skipped = 0, failure = null;
+  for (const move of moves) {
+    if (stopped()) break;
+    try {
+      const sum = site && site.paths[move.id] === move.from ? site.sums[move.id] : null;
+      const file = sum ? await fileAt(move.from) : null;
+      if (!file || (await reading(move.from, stallMs, () => sha256(file))) !== sum) { skipped += 1; continue; }
+      const to = await writing(move.to, stallMs, () => writeFile(root, move.to, file, { reuseSame: true, anyName: false }));
+      if (to === move.from) continue;
+      if (!(await verified(root, { path: to, size: file.size, sha256: sum }, { stallMs }))) throw new FolderUnavailable(`Your folder did not keep ${to} as it was written. Its old file is left as it is. Rename again to go on.`);
+      landed.push({ id: move.id, from: move.from, seen: file.lastModified, facts: { path: to, size: file.size, sha256: sum, title: move.title } });
+    } catch (e) {
+      failure = e instanceof FolderUnavailable ? e : new FolderUnavailable(`Renaming stopped at ${move.from}: ${String(e && e.message)}`);
+      break;
+    } finally {
+      progress();
+    }
+  }
+  let entry = null;
+  if (landed.length) {
+    const ids = landed.map((l) => l.id);
+    const dates = Object.fromEntries(ids.filter((id) => site.dates[id]).map((id) => [id, site.dates[id]]));
+    entry = (await writing(SHARED_DIR, stallMs, () => writeEntry(root, siteId, landed.map(({ id, facts }) => ({ id, facts })), now, { dates, tax: site.tax.filter((id) => ids.includes(id)) }))).name;
+    // Listed in their new places: the old files go, unless a document not
+    // moved is still found by one, or it changed since it was read.
+    const moved = new Set(ids);
+    const held = new Set(Object.entries(folder.record).flatMap(([other, r]) => Object.entries(r.paths).filter(([id]) => other !== siteId || !moved.has(id)).map(([, path]) => path)));
+    for (const l of landed) {
+      if (held.has(l.from)) continue;
+      try {
+        const again = await fileAt(l.from);
+        if (!again || again.size !== l.facts.size || again.lastModified !== l.seen) continue;
+        const parts = l.from.split("/");
+        const leaf = parts.pop();
+        let dir = root;
+        for (const part of parts) dir = await dir.getDirectoryHandle(part);
+        await writing(l.from, stallMs, () => dir.removeEntry(leaf));
+      } catch (e) {
+        if (!notThere(e)) failure = failure || (e instanceof FolderUnavailable ? e : new FolderUnavailable(`An old file could not be removed (${l.from}). Rename again to go on.`));
+      }
+    }
+  }
+  if (failure) throw failure;
+  return { renamed: landed.length, skipped, entry };
 }

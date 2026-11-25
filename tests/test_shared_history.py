@@ -436,6 +436,20 @@ def test_the_same_bytes_as_a_numbered_copy_are_left_as_they_are(tab):
     assert path == numbered and len(names) == 2
 
 
+def test_the_same_bytes_under_another_name_in_the_folder_are_left_as_they_are(tab):
+    # Another computer, or an older file name pattern, named the same document differently.
+    other = "Statement Sweep/American Express/American Express 2026-10-28.pdf"
+    path, names = run(tab, saving({other: PDF_A}, PDF_A))["result"]
+    assert path == other and names == ["American Express 2026-10-28.pdf"]
+
+
+def test_other_bytes_of_the_same_length_under_another_name_are_saved(tab):
+    other = "Statement Sweep/American Express/American Express 2026-10-28.pdf"
+    changed = PDF_A[:-1] + ("X" if PDF_A[-1] != "X" else "Y")
+    path, names = run(tab, saving({other: changed}, PDF_A))["result"]
+    assert path == PATH_A and len(names) == 2
+
+
 def test_a_save_begun_and_never_finished_has_its_name_taken_over(tab):
     # An empty file is all an unfinished save leaves behind.
     path, names = run(tab, saving({PATH_A: ""}, PDF_A))["result"]
@@ -483,6 +497,7 @@ def test_a_document_tried_again_while_its_first_save_has_not_ended_is_not_saved_
       const hang = (dir) => ({{
         getDirectoryHandle: async (n, o) => hang(await dir.getDirectoryHandle(n, o)),
         getFileHandle: async (n, o) => {{ const h = await dir.getFileHandle(n, o); return {{ getFile: () => h.getFile(), createWritable: () => (o && o.create ? never : h.createWritable()) }}; }},
+        entries: () => dir.entries(),
       }});
       f.writeFile(hang(root), path, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }});
       await new Promise((r) => setTimeout(r, 50));

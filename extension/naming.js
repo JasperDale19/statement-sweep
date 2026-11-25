@@ -122,6 +122,30 @@ const providersOwnName = (provider, doc) => {
   return `${clean(name.replace(/\.pdf$/i, "")) || "Document"}.pdf`;
 };
 
+// What a file name the provider's own pattern made says of its document:
+// { date, title }, or null for a name that pattern did not make. The reverse
+// of providersOwnName, for renaming files saved before a pattern was set
+// (shared-history.js). A "(1)" a second copy was given is not part of a
+// title, unless the title is the last thing in the name, where it cannot be
+// told from one.
+export function fromOwnName(provider, leaf) {
+  const stem = String(provider.fileName || "").replace(/\.pdf$/i, "");
+  if (!stem.includes("{date}") || stem.includes("{id}")) return null;
+  const order = [];
+  const source = stem.split(/(\{date\}|\{title\})/).map((part) => {
+    if (part === "{date}") { order.push("date"); return "(\\d{4}-\\d\\d-\\d\\d)"; }
+    if (part === "{title}") { order.push("title"); return "(.*?)"; }
+    return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }).join("");
+  const numbered = stem.endsWith("{title}") ? "" : "(?: \\(\\d+\\))?";
+  const found = new RegExp(`^${source}${numbered}\\.pdf$`).exec(leaf);
+  if (!found) return null;
+  const got = { date: "", title: "" };
+  order.forEach((field, i) => { got[field] = found[i + 1]; });
+  if (got.title === "Document") got.title = "";
+  return got;
+}
+
 export function pathFor(stored, provider, doc) {
   const naming = effective(normalise(stored), provider.id);
   const fields = fieldsOf(provider, doc);

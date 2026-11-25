@@ -219,7 +219,7 @@ def summary_of(got):
 
 
 def test_a_document_another_computer_saved_into_the_folder_is_not_saved_again(engine):
-    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")]},
+    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28"), doc("f2")], "bodies": {"f2": OTHER_PDF}},
                             shared={"theirs.json": other_copy(["f1"]), F1: PDF})
     assert got["board"]["fake"]["text"] == "1 new.", got["board"]
     assert sorted(pdfs) == ["Chosen/" + F1, "Chosen/" + F2]
@@ -227,7 +227,7 @@ def test_a_document_another_computer_saved_into_the_folder_is_not_saved_again(en
     assert got["local"]["seen:fake"] == ["f2"]
     # A new entry, holding only what this run saved into the folder, and how to check it.
     docs, checked = written(got)
-    assert [e["sites"] for e in docs] == [{"fake": ["f2"]}] and docs[0]["files"] == {"fake": {"f2": facts(F2)}}
+    assert [e["sites"] for e in docs] == [{"fake": ["f2"]}] and docs[0]["files"] == {"fake": {"f2": facts(F2, OTHER_PDF)}}
     assert got["files"][HIST + "theirs.json"] == other_copy(["f1"])
     assert re.search(r"Folder read before the run: 1 history file\(s\), 1 document\(s\) in the folder, 1 file\(s\) read to check them, in [\d,]+ ms\.", summary_of(got))
     assert "1 already in your chosen folder, saved by another computer." in site
@@ -328,7 +328,7 @@ def test_a_folder_not_shared_that_cannot_be_written_still_saves_to_downloads(eng
 
 def test_a_folder_chosen_during_a_sweep_is_used_from_the_next_one(engine):
     # Settings switches to another folder while the first document is saving.
-    got, _, pdfs = sweep(engine, {"docs": [doc("f1"), doc("f2", date="2026-09-28")], "switchFolder": "Other"})
+    got, _, pdfs = sweep(engine, {"docs": [doc("f1"), doc("f2", date="2026-09-28")], "bodies": {"f2": OTHER_PDF}, "switchFolder": "Other"})
     assert got["board"]["fake"]["text"] == "2 new.", got["board"]
     assert sorted(pdfs) == ["Chosen/" + F1, "Chosen/" + F2]
     # The entry is in the folder the documents went to, and nothing is in the new one.

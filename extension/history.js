@@ -203,7 +203,10 @@ export function readHistory(text) {
             && Number.isSafeInteger(f.size) && f.size >= 0 && typeof f.sha256 === "string" && /^[0-9a-f]{64}$/.test(f.sha256);
           if (!ok) refuse(`${name}: its list of saved files has an entry that is not a saved file.`);
         }
-        files[id] = Object.fromEntries(Object.entries(byDoc).map(([doc, f]) => [doc, { path: f.path, size: f.size, sha256: f.sha256 }]));
+        // A document's title, when the entry gives it, is what renaming its
+        // file to another pattern goes by (shared-history.js).
+        files[id] = Object.fromEntries(Object.entries(byDoc).map(([doc, f]) => [doc, { path: f.path, size: f.size, sha256: f.sha256,
+          ...(typeof f.title === "string" && f.title.length <= MAX_ID_LENGTH ? { title: f.title } : {}) }]));
       }
     }
     // Optional, in a shared folder: the day each site was last looked at with

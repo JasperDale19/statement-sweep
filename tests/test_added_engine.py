@@ -12,6 +12,8 @@ from test_log import BASE, ENGINE, LINE, page_with
 
 ORIGIN = BASE.rstrip("/")
 PDF = "%PDF-1.4 invented\n%%EOF"
+# Another document: two with the same bytes in one folder are one file.
+PDF2 = "%PDF-1.4 invented too\n%%EOF"
 # The stand-in list: the engine's stand-in tab is this very page.
 LIST = """<table><thead><tr><th>Statement Date</th><th>Document</th></tr></thead><tbody>
 <tr><td>Oct 31, 2026</td><td><a href="/files/99990002.pdf">Download</a></td></tr>
@@ -59,7 +61,7 @@ START = """async ({ local, list }) => {
 
 @pytest.fixture
 def engine(browser):
-    t = page_with(browser, ENGINE + MORE, {"providers/index.js": INDEX, "files/99990001.pdf": PDF, "files/99990002.pdf": PDF})
+    t = page_with(browser, ENGINE + MORE, {"providers/index.js": INDEX, "files/99990001.pdf": PDF, "files/99990002.pdf": PDF2})
     yield t
     t.context_.close()
 
@@ -83,8 +85,8 @@ def test_an_added_site_syncs_and_logs_like_the_others(engine):
     got, site = sweep(engine)
     assert got["board"]["added-acme"]["state"] == "ok", got["board"]
     assert got["board"]["added-acme"]["text"] == "2 new."
-    assert got["files"]["Chosen/Statement Sweep/Acme/2026-10-31 Acme Statement.pdf"] == PDF
-    assert got["files"]["Chosen/Statement Sweep/Acme/2026-09-30 Acme Statement.pdf"] == PDF
+    assert {got["files"]["Chosen/Statement Sweep/Acme/2026-10-31 Acme Statement.pdf"],
+            got["files"]["Chosen/Statement Sweep/Acme/2026-09-30 Acme Statement.pdf"]} == {PDF, PDF2}
     assert got["local"]["seen:added-acme"] == ["2026-10-31", "2026-09-30"]
     assert got["local"]["dates:added-acme"] == {"2026-10-31": "2026-10-31", "2026-09-30": "2026-09-30"}
     assert got["local"]["addedLast:added-acme"]["ok"] is True and got["local"]["addedLast:added-acme"]["found"] == 2
