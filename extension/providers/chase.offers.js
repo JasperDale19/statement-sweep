@@ -26,7 +26,11 @@
   const ADDED_WORDS = /\b(added|activated)\b/i;
   const TILE = "[data-cy='commerce-tile'], [data-testid='commerce-tile']";
   const LINK = /^(chase offers|see all offers|view all offers|all chase offers)$/i;
-  const ALL = /^all( offers)?(\s*\(\d+\))?$/i;
+  // "All", or as the hub's category bar names it, "All 2 of 8".
+  const ALL = /^all( offers)?(\s*\(\d+\))?(\s+\d+\s+of\s+\d+)?$/i;
+  const ALL_LIST = /[?&;]offerCategoryName=ALL\b/i;
+  // A carousel's own "See more offers" opens only that carousel's collection.
+  const CAROUSEL_MORE = "[data-testid='carouselSeeAllOrSeeMoreButton']";
   const MORE = /^(load|show|view|see) more( offers)?$/i;
   const BACK = /^(back|go back|back to offers|back to all offers|back to chase offers)$/i;
   const NONE = /(no (available |eligible |new )?offers|you('ve| have) added all|there are no offers|check back (soon|later))/i;
@@ -40,7 +44,11 @@
   const RATE_MARKERS = ["too many requests", "rate limit", "try again later", "temporarily unavailable", "http error 429", "unusual traffic"];
 
   const onChase = () => location.hostname === "secure.chase.com";
-  const onHub = () => location.href.includes(HUB);
+  // Pressing an offer in the All list adds it and opens its own Offer Details
+  // page (/merchantOffers/offer-activated/...), which shows a few other offers
+  // of its own. That page is under the hub's address but is not the list.
+  const onDetail = () => /\/merchantOffers\/offer-(activated|details?)\b/i.test(location.href);
+  const onHub = () => location.href.includes(HUB) && !onDetail();
   const business = (label) => BUSINESS.test(label) || CARDHOLDER.test(label);
   // A card is in scope only when its name can be read: with both kinds in
   // one sign-in, a card of unknown kind could be the other site's.
@@ -62,15 +70,36 @@
   // card, "SAPPHIRE PREFERRED (...1234)", that opens a list of cards.
   const SWITCHERS = "[role='combobox'], button[aria-haspopup], [aria-haspopup='listbox'], select";
   const cardLabel = (s) => {
-    const t = K.tidy(s).replace(/\s*,\s*(current selection|selected)\s*$/i, "");
+    const t = K.tidy(s).replace(/\s*,\s*(current selection|selected)\s*$/i, "")
+      // "Sapphire Reserve...1234", as the one-card selector says it, read as
+      // "Sapphire Reserve (...1234)".
+      .replace(/^([A-Za-z0-9][^()]*?)\s*\.{2,}\s*(\d{4})$/, "$1 (...$2)");
     return CARD.test(t) ? t : "";
   };
+  // With one card, Chase draws no switcher, only this box naming the card.
+  const READONLY_CARD = "[data-testid='account-selector-readonly']";
   function switcher() {
     return Array.from(document.querySelectorAll(SWITCHERS)).find((el) => K.shown(el) && cardLabel(el.tagName === "SELECT" ? (el.selectedOptions[0] || {}).textContent : K.nameOf(el))) || null;
   }
+  // The card on show. Chase's All list (offerCategoriesPage, every offer in
+  // one list) draws no card at all, only its accountId in the address, so a
+  // card read on the hub is kept against that accountId and stands for it
+  // there, and nowhere else.
   function cardOnShow() {
+    const drawn = cardDrawn();
+    const account = accountId();
+    const kept = (globalThis.__chaseOfferCardOf = globalThis.__chaseOfferCardOf || {});
+    if (drawn) {
+      if (account) kept[account] = drawn;
+      return drawn;
+    }
+    return (account && kept[account]) || "";
+  }
+  function cardDrawn() {
     const box = switcher();
     if (box) return cardLabel(box.tagName === "SELECT" ? (box.selectedOptions[0] || {}).textContent : K.nameOf(box));
+    const only = Array.from(document.querySelectorAll(READONLY_CARD)).find((el) => K.shown(el) && cardLabel(el.innerText));
+    if (only) return cardLabel(only.innerText);
     const heading = Array.from(document.querySelectorAll("h1, h2, h3, [role='heading']")).find((h) => K.shown(h) && cardLabel(h.innerText));
     return heading ? cardLabel(heading.innerText) : "";
   }
@@ -80,6 +109,24 @@
   const lastFour = (label) => (CARD.exec(label) || [])[1] || "";
   const accountId = () => (/[?&;]accountId=(\d+)/.exec(location.hash || location.href) || [])[1] || "";
   const cardKey = (label) => lastFour(label) || (accountId() ? `a${accountId().slice(-4)}` : "card");
+
+  // Since 2026-11 a whole commerce tile is its offer's one control, and its
+  // own aria-label says what pressing it does: "3 of 168 Chevron 2% cash
+  // back Add Offer", or "... Success Added" once added. Its aria-labelledby
+  // names only the tile's banner ("New", "Exclusive"), so its accessible
+  // name says neither; the label is read here instead.
+  const TILE_ACTION = /^\d+\s+of\s+\d+\s+\S.*?\s+(add offer|success,?\s+added)$/i;
+  function tileAction(el) {
+    if (!el || !el.matches(TILE)) return "";
+    const m = TILE_ACTION.exec((el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim());
+    if (!m) return "";
+    return /added$/i.test(m[1]) ? "Added" : "Add offer";
+  }
+  const controlName = (el) => tileAction(el) || K.nameOf(el);
+
+  // A tile's banners ("New", "Exclusive", "20d left") are not its merchant.
+  const bannersOf = (tile) => Array.from(tile.querySelectorAll("[data-testid='tile-banner'], [data-testid='days-left-banner'], [data-testid='newOfferCalloutText']"))
+    .map((b) => (b.innerText || b.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean);
 
   // Every offer's own control: an add control, or the mark of one added.
   // Inside a commerce tile where Chase draws them, else anywhere in the hub
@@ -91,7 +138,7 @@
     const consider = (el, tile) => {
       if (seen.has(el)) return;
       seen.add(el);
-      const name = K.nameOf(el);
+      const name = controlName(el);
       const merchant = tile ? K.headingOf(tile) || merchantOf(tile, name) : "";
       // A bare "Add" or "+" counts only inside an offer's own tile.
       if (K.isAddName(name, tile ? ADD : ADD.slice(0, 2), merchant)) out.push({ el, name, merchant, added: false });
@@ -116,17 +163,17 @@
   }
 
   function merchantOf(tile, controlName) {
-    const lines = K.linesOf(tile, [controlName]);
+    const lines = K.linesOf(tile, [controlName, ...bannersOf(tile)]);
     return lines.find((l) => !/[$%]|\bback\b|\bdays?\b|\bleft\b|\bexpires?\b|^\+$/i.test(l)) || "";
   }
 
   function describe(control, all, card) {
     const tile = control.el.closest(TILE) || K.tileOf(control.el, all);
     const merchant = control.merchant || K.headingOf(tile) || merchantOf(tile, control.name);
-    const lines = K.linesOf(tile, [control.name, merchant]);
+    const lines = K.linesOf(tile, [control.name, merchant, ...bannersOf(tile)]);
     const title = lines.find((l) => /[$%]|\bback\b|\bpoints?\b|\bearn\b|\bspend\b/i.test(l)) || lines[0] || "";
     const own = tile.getAttribute("data-offer-id") || tile.getAttribute("data-offerid") || "";
-    return { id: `${cardKey(card)}:${own || K.wordsId(merchant, title)}`, tile, merchant, title, expires: K.expiresOf(K.linesOf(tile).join("\n")) };
+    return { id: `${cardKey(card)}:${own || K.wordsId(merchant, title)}`, tile, merchant, title, expires: K.expiresOf(K.linesOf(tile).join("\n")) || K.expiresOf(tile.getAttribute("aria-label") || "") };
   }
 
   function offersOnPage(card) {
@@ -176,6 +223,7 @@
     if (held) return held;
     if (!onChase()) return { state: "no_list" };
     if (!onHub()) {
+      if (mayWalk && onDetail()) return (await backToHub()) ? { state: "walking" } : { state: "stopped", why: "Chase did not go back to its offers." };
       if (mayWalk && press(hubLink(), "hub link")) return { state: "walking" };
       return { state: "no_list" };
     }
@@ -188,10 +236,15 @@
     }
     // Every offer, not one category of them.
     const all = K.controlNamed((n) => ALL.test(n), { roles: "button, [role='tab'], [role='button']" });
-    if (all && mayWalk && !["true"].includes(all.getAttribute("aria-selected") || all.getAttribute("aria-pressed") || all.getAttribute("aria-current") || "") && press(all, "all offers")) {
+    // The card is read here, on the hub, before All leaves it. Reached from
+    // another page of Chase's, the hub draws its offers before its card, so
+    // the card is waited for.
+    if (!cardOnShow()) await K.waitFor(() => cardOnShow(), CARD_WAIT_MS);
+    if (all && mayWalk && !ALL_LIST.test(location.hash) && !["true"].includes(all.getAttribute("aria-selected") || all.getAttribute("aria-pressed") || all.getAttribute("aria-current") || "") && press(all, "all offers")) {
       return { state: "walking" };
     }
-    const more = K.controlNamed((n) => MORE.test(n));
+    const more = Array.from(document.querySelectorAll("button, a[href], [role='button']"))
+      .find((el) => K.shown(el) && !el.matches(CAROUSEL_MORE) && !el.closest("footer, [role='contentinfo']") && MORE.test(K.nameOf(el))) || null;
     if (more && mayWalk && walk().more < MORE_PRESSES) {
       walk().more += 1;
       more.click();
@@ -230,7 +283,7 @@
     const mine = found.find((c) => describe(c, all, card).id === offer.id);
     if (!mine) return { ok: false, why: "That offer is no longer on the page." };
     if (mine.added) return { ok: true, already: true };
-    if (!K.isAddName(K.nameOf(mine.el), ADD, mine.merchant)) return { ok: false, why: "That offer's control is not its add control." };
+    if (!K.isAddName(controlName(mine.el), ADD, mine.merchant)) return { ok: false, why: "That offer's control is not its add control." };
     if (K.turnedOff(mine.el)) return { ok: false, why: "That offer's add control is turned off." };
     const tile = mine.el.closest(TILE) || K.tileOf(mine.el, all);
     const route = location.href;
@@ -243,7 +296,7 @@
       const opened = K.dialogs().find((d) => !before.has(d));
       if (opened) return { dialog: opened };
       if (!tile.isConnected) return { gone: true };
-      if (ADDED.test(K.nameOf(mine.el)) || offerControls().some((c) => c.added && tile.contains(c.el))) return { added: true };
+      if (ADDED.test(controlName(mine.el)) || offerControls().some((c) => c.added && tile.contains(c.el))) return { added: true };
       return null;
     }, ADD_WAIT_MS);
     if (!settled) return { ok: false, why: "Chase did not show the offer as added." };

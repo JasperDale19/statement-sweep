@@ -286,3 +286,174 @@ def test_the_cards_product_name_is_read_but_never_a_cardholders(tab):
     load(tab, HUB, page(tile("Example Grocer", "10% cash back"), card="J. INVENTED (...4321)"))
     got = read(tab, cards="business")
     assert got["state"] == "ok" and got["card"] == "4321" and "cardName" not in got
+
+
+# Chase Offers since 2026-11: the whole tile is the offer's one control, its
+# own aria-label ending in what pressing it does ("Add Offer", "Success
+# Added"), its aria-labelledby naming only its banner. With one card there is
+# no switcher, only a read-only box saying "Sapphire Preferred...1234".
+def whole_tile(n, merchant, words, added=False, banner=""):
+    end = "Success Added" if added else "Add Offer"
+    tag = f'<span data-testid="tile-banner"><span>{banner}</span></span>' if banner else ""
+    by = f' aria-labelledby="banner-{n}"' if banner else ""
+    return (f'<a href="/#" role="button" data-cy="commerce-tile" data-testid="commerce-tile"{by} '
+            f'aria-label="{n} of 9 {merchant} {words} {end}"><div>'
+            f'<div role="img" id="banner-{n}">{tag}</div>'
+            f'<div><span>{merchant}</span><span>{words}</span></div>'
+            f'<svg aria-hidden="true" width="16" height="16"><path d="M0 0h16v16H0z"/></svg></div></a>')
+
+
+WHOLE_SCRIPT = """<script>
+window.pressed = [];
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('a, button');
+  if (!el) return;
+  e.preventDefault();
+  pressed.push(el.getAttribute('aria-label') || el.textContent.trim());
+  const label = el.getAttribute('aria-label') || '';
+  if (el.matches('[data-cy=commerce-tile]') && / Add Offer$/.test(label))
+    setTimeout(() => el.setAttribute('aria-label', label.replace(/ Add Offer$/, ' Success Added')), 80);
+});
+</script>"""
+
+
+def whole_page(*tiles, card="Sapphire Preferred...1234"):
+    box = f'<div>Choose account <div data-testid="account-selector-readonly"><span>{card}</span></div></div>' if card else ""
+    return f"{box}<main id='list'>{''.join(tiles)}</main>{WHOLE_SCRIPT}"
+
+
+def test_whole_tiles_are_read_by_their_own_label(tab):
+    load(tab, HUB, whole_page(whole_tile(1, "Example Grocer", "10% cash back", banner="New"),
+                              whole_tile(2, "Invented Hardware", "$15 cash back", added=True, banner="Exclusive"),
+                              whole_tile(3, "Example Books", "5% cash back")))
+    got = read(tab)
+    assert got["state"] == "ok" and got["card"] == "1234" and got["cardName"] == "Sapphire Preferred"
+    assert [(o["merchant"], o["title"], o["added"]) for o in got["offers"]] == [
+        ("Example Grocer", "10% cash back", False), ("Invented Hardware", "$15 cash back", True), ("Example Books", "5% cash back", False)]
+    assert tab.evaluate("pressed") == []
+
+
+def test_a_whole_tile_add_presses_only_that_tile_and_sees_it_added(tab):
+    load(tab, HUB, whole_page(whole_tile(1, "Example Grocer", "10% cash back"), whole_tile(2, "Example Books", "5% cash back")))
+    offer = read(tab)["offers"][1]
+    assert add(tab, offer) == {"ok": True}
+    assert tab.evaluate("pressed") == ["2 of 9 Example Books 5% cash back Add Offer"]
+    assert [o["added"] for o in read(tab)["offers"]] == [False, True]
+
+
+def test_a_whole_tile_saying_anything_else_is_not_an_offer_control(tab):
+    odd = whole_tile(1, "Example Grocer", "10% cash back").replace(" Add Offer", " Activate and Accept Terms")
+    load(tab, HUB, whole_page(odd))
+    got = read(tab)
+    assert got["state"] == "stopped" and tab.evaluate("pressed") == []
+
+
+def test_a_read_only_business_card_is_passed_over(tab):
+    load(tab, HUB, whole_page(whole_tile(1, "Example Grocer", "10% cash back"), card="Ink Business Cash...9876"))
+    assert read(tab, cards="personal") == {"state": "ok", "card": "9876", "offers": [], "passed": True}
+    assert tab.evaluate("pressed") == []
+
+
+# The hub's All filter opens every offer in one list, which draws no card,
+# only the accountId in its address. A carousel's own "See more offers" opens
+# just that carousel's collection.
+ALL_SCRIPT = """<script>
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('button');
+  if (!el) return;
+  if (el.dataset.testid === 'carouselSeeAllOrSeeMoreButton') window.carouselPressed = true;
+  if (el.dataset.testid === 'offerHubCategoryNavbarButtonTopLink') setTimeout(() => {
+    location.hash = '#/dashboard/merchantOffers/offerCategoriesPage?accountId=' + (window.nextAccount || '900000001234') + '&offerCategoryName=ALL';
+    document.getElementById('box').remove();
+    document.getElementById('list').innerHTML = window.allList;
+  }, 50);
+});
+</script>"""
+
+
+def hub_with_all(carousel, everything, next_account=None):
+    box = '<div id="box">Choose account <div data-testid="account-selector-readonly"><span>Sapphire Preferred...1234</span></div></div>'
+    nav = ('<button data-testid="offerHubCategoryNavbarButtonTopLink" aria-label="New 1 of 8">New</button>'
+           '<button data-testid="offerHubCategoryNavbarButtonTopLink" aria-label="All 2 of 8">All</button>')
+    more = '<button data-testid="carouselSeeAllOrSeeMoreButton">See more offers</button>'
+    setup = f"<script>window.allList = {everything!r}; window.nextAccount = {next_account!r};</script>".replace("None", "null")
+    return f"{box}{nav}<main id='list'>{carousel}{more}</main>{WHOLE_SCRIPT}{ALL_SCRIPT}{setup}"
+
+
+def walk_to_end(tab, cards="personal"):
+    for _ in range(6):
+        got = read(tab, cards=cards)
+        if got["state"] != "walking":
+            return got
+        tab.wait_for_timeout(150)
+    return got
+
+
+def test_the_hub_walks_to_all_and_keeps_the_card_read_there(tab):
+    carousel = whole_tile(1, "Example Grocer", "10% cash back")
+    everything = whole_tile(1, "Example Grocer", "10% cash back") + whole_tile(2, "Example Books", "5% cash back", added=True) \
+        + whole_tile(3, "Invented Hardware", "$15 cash back")
+    load(tab, HUB, hub_with_all(carousel, everything))
+    got = walk_to_end(tab)
+    assert "offerCategoryName=ALL" in tab.evaluate("location.hash")
+    assert got["state"] == "ok" and got["card"] == "1234" and got["cardName"] == "Sapphire Preferred"
+    assert [(o["merchant"], o["added"]) for o in got["offers"]] == [("Example Grocer", False), ("Example Books", True), ("Invented Hardware", False)]
+    assert tab.evaluate("window.carouselPressed") is None
+    offer = got["offers"][2]
+    assert add(tab, offer) == {"ok": True}
+    assert tab.evaluate("pressed")[-1] == "3 of 9 Invented Hardware $15 cash back Add Offer"
+
+
+def test_a_card_kept_for_one_account_does_not_stand_for_another(tab):
+    load(tab, HUB, hub_with_all(whole_tile(1, "Example Grocer", "10% cash back"),
+                                whole_tile(1, "Example Grocer", "10% cash back"), next_account="900000001"))
+    got = walk_to_end(tab)
+    assert got["state"] == "stopped" and "card on show could not be read" in got["why"]
+    assert tab.evaluate("pressed") == ["All 2 of 8"]
+
+
+def test_a_card_drawn_after_the_offers_is_waited_for_before_all(tab):
+    load(tab, HUB, hub_with_all(whole_tile(1, "Example Grocer", "10% cash back"),
+                                whole_tile(1, "Example Grocer", "10% cash back") + whole_tile(2, "Example Books", "5% cash back")))
+    # The hub's card box arrives a moment after its offers, as on the real site.
+    tab.evaluate("""() => { const box = document.getElementById('box'); const keep = box.innerHTML; box.innerHTML = '';
+                            setTimeout(() => { box.innerHTML = keep; }, 300); }""")
+    got = walk_to_end(tab)
+    assert got["state"] == "ok" and got["card"] == "1234" and len(got["offers"]) == 2
+
+
+# Pressing an offer in the All list adds it and opens its own Offer Details
+# page, whose address is under the hub's and which shows a few other offers.
+DETAIL_SCRIPT = """<script>
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-cy=commerce-tile]');
+  if (!el) return;
+  e.preventDefault();
+  if (!/ Add Offer$/.test(el.getAttribute('aria-label') || '')) return;
+  setTimeout(() => {
+    window.savedList = document.getElementById('list').innerHTML.replace(el.outerHTML,
+      el.outerHTML.replace(' Add Offer"', ' Success Added"'));
+    history.pushState(null, '', '#/dashboard/merchantOffers/offer-activated/FIGG:1?accountId=900000001234&offerCategoryName=ALL');
+    document.getElementById('list').innerHTML = '<p>Success! This offer is added to your card.</p>' + window.otherOffers;
+  }, 50);
+}, true);
+window.addEventListener('popstate', () => { document.getElementById('list').innerHTML = window.savedList; });
+</script>"""
+
+
+def test_after_each_add_the_offer_details_page_is_left_for_the_list(tab):
+    listing = whole_tile(1, "Example Grocer", "10% cash back") + whole_tile(2, "Example Books", "5% cash back")
+    others = whole_tile(1, "Invented Shoes", "8% cash back") + whole_tile(2, "Example Tea", "3% cash back")
+    all_url = HUB.replace("offer-hub?", "offerCategoriesPage?") + "&offerCategoryName=ALL"
+    body = (f"<main id='list'>{listing}</main><script>window.otherOffers = {others!r};</script>"
+            "<script>window.pressed = [];</script>" + DETAIL_SCRIPT)
+    load(tab, all_url, body)
+    tab.evaluate("window.__chaseOfferCardOf = {'900000001234': 'Sapphire Preferred (...1234)'}")
+    offers = read(tab)["offers"]
+    first = add(tab, offers[0])
+    assert first["ok"] is True, first
+    assert "offerCategoriesPage" in tab.evaluate("location.hash")
+    second = add(tab, offers[1])
+    assert second["ok"] is True
+    assert "offerCategoriesPage" in tab.evaluate("location.hash")
+    assert [o["added"] for o in read(tab)["offers"]] == [True, True]
