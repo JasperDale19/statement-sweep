@@ -85,7 +85,7 @@ def test_the_real_engine_renames_what_is_saved_to_the_settings_of_now(extension)
     page.wait_for_selector("#scope option[value=amex]", state="attached")
     assert page.evaluate(CHOOSE, {"path": PATH, "pdf": PDF, "entry": ENTRY})["state"] == "ok"
     page.evaluate("chrome.storage.local.set({ naming: { base: 'Statement Sweep', folder: '{provider}', file: '{provider} {date}[ {title}]', providers: {} } })")
-    assert page.evaluate("chrome.runtime.sendMessage({ type: 'renamePreview' })") == {"state": "ok", "count": 1, "alone": 0}
+    assert page.evaluate("chrome.runtime.sendMessage({ type: 'renamePreview' })") == {"state": "ok", "count": 1, "alone": 0, "old": 0}
     assert page.evaluate(LISTING) == [PATH]
     done = page.evaluate("chrome.runtime.sendMessage({ type: 'renameFiles' })")
     assert done["state"] == "ok" and done["renamed"] == 1 and done["problem"] == "", done
@@ -93,4 +93,4 @@ def test_the_real_engine_renames_what_is_saved_to_the_settings_of_now(extension)
     assert page.evaluate(LISTING) == [renamed]
     # Still one document in the folder's record, found in its new place, with nothing left to rename.
     assert page.evaluate("chrome.storage.local.get('folder:amex')")["folder:amex"]["ids"] == ["o1"]
-    assert page.evaluate("chrome.runtime.sendMessage({ type: 'renamePreview' })") == {"state": "ok", "count": 0, "alone": 0}
+    assert page.evaluate("chrome.runtime.sendMessage({ type: 'renamePreview' })") == {"state": "ok", "count": 0, "alone": 0, "old": 0}

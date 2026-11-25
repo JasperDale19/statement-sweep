@@ -163,6 +163,11 @@ export async function reconcile(root, { known = {}, progress = () => {}, stopped
     if (claim.tax) r.tax.push(doc);
     // Its title, when an entry gives it: what renaming its file goes by.
     if (typeof claim.title === "string") (r.titles = r.titles || {})[doc] = claim.title;
+    // Other places entries give for it: where it was before it was renamed,
+    // or where another computer saved it too. A copy left there can go
+    // (renamePlan).
+    const others = [...new Set(claim.candidates.filter((c) => c.sha256 === facts.sha256 && c.path !== facts.path).map((c) => c.path))];
+    if (others.length) (r.others = r.others || {})[doc] = others;
   };
   const all = Object.entries(claims.claims).flatMap(([site, docs]) => Object.entries(docs).map(([doc, claim]) => ({ site, doc, claim })));
   let done = 0;
@@ -317,14 +322,46 @@ export function renamePlan(record, providers, naming) {
       if (!isOrNumbered(to, from)) moves.push({ site: provider.id, id, from, to, title, date });
     }
   }
-  return { moves, alone };
+  // Copies that may be left where a document was before: checked, and
+  // removed only if they hold its very bytes, when the plan is carried out.
+  const found = new Set(Object.values(record).flatMap((r) => Object.values(r.paths)));
+  const old = [];
+  for (const provider of providers) {
+    const site = record[provider.id];
+    if (!site || provider.added || !site.others) continue;
+    for (const [id, paths] of Object.entries(site.others)) {
+      for (const path of paths) if (!found.has(path)) old.push({ site: provider.id, id, path });
+    }
+  }
+  return { moves, alone, old };
 }
 
+// Of a plan's `old`, those with a file still there, of the size of the
+// document's own: the copies carrying the plan out would look at. Throws
+// FolderUnavailable if the folder cannot be read.
+export async function oldCopies(root, folder, old, { stallMs = STALL_MS } = {}) {
+  const fileAt = filesOf(root, stallMs);
+  const left = [];
+  for (const o of old) {
+    const site = folder.record[o.site];
+    const k = site && folder.files[site.paths[o.id]];
+    const file = k ? await fileAt(o.path) : null;
+    if (file && file.size === k.size) left.push(o);
+  }
+  return left;
+}
+
+// Writes and removals begun and not yet ended, a time limit or not: nothing
+// that changes the folder starts while one is still going (mutationsSettled).
+const going = new Set();
+export const mutationsSettled = () => Promise.allSettled([...going]);
 const writing = (what, ms, work) => {
   let timer;
   const failed = (e) => new FolderUnavailable(`Your folder could not be written (${what}${e && e.name ? `: ${e.name}` : " did not answer"}). The files renamed so far are kept. Rename again to go on.`);
   const limit = new Promise((resolve, reject) => { timer = setTimeout(() => reject(failed()), ms); });
   const done = Promise.resolve().then(work).catch((e) => { throw e instanceof FolderUnavailable ? e : failed(e); });
+  going.add(done);
+  done.catch(() => {}).finally(() => going.delete(done));
   return Promise.race([done, limit]).finally(() => clearTimeout(timer));
 };
 
@@ -336,8 +373,10 @@ const writing = (what, ms, work) => {
 // changed since the read, or is claimed by a document not being moved, is
 // left where it is. If the folder stops answering part way, what was
 // written so far is still listed and its old files removed, and
-// FolderUnavailable is thrown. Answers { renamed, skipped, entry }.
-export async function renameSite(root, folder, siteId, moves, { now = new Date(), stopped = () => false, progress = () => {}, stallMs = STALL_MS } = {}) {
+// FolderUnavailable is thrown. `old`, [{id, path}] of the plan: copies left
+// where documents were before, removed if they hold the document's bytes
+// and its own file is there. Answers { renamed, skipped, removed, entry }.
+export async function renameSite(root, folder, siteId, moves, { now = new Date(), stopped = () => false, progress = () => {}, stallMs = STALL_MS, old = [] } = {}) {
   const site = (folder.record || {})[siteId];
   const fileAt = filesOf(root, stallMs);
   const landed = [];
@@ -351,7 +390,7 @@ export async function renameSite(root, folder, siteId, moves, { now = new Date()
       const to = await writing(move.to, stallMs, () => writeFile(root, move.to, file, { reuseSame: true, anyName: false }));
       if (to === move.from) continue;
       if (!(await verified(root, { path: to, size: file.size, sha256: sum }, { stallMs }))) throw new FolderUnavailable(`Your folder did not keep ${to} as it was written. Its old file is left as it is. Rename again to go on.`);
-      landed.push({ id: move.id, from: move.from, seen: file.lastModified, facts: { path: to, size: file.size, sha256: sum, title: move.title } });
+      landed.push({ id: move.id, from: move.from, date: move.date, seen: file.lastModified, facts: { path: to, size: file.size, sha256: sum, title: move.title } });
     } catch (e) {
       failure = e instanceof FolderUnavailable ? e : new FolderUnavailable(`Renaming stopped at ${move.from}: ${String(e && e.message)}`);
       break;
@@ -359,30 +398,58 @@ export async function renameSite(root, folder, siteId, moves, { now = new Date()
       progress();
     }
   }
-  let entry = null;
+  // A file is removed only if no document is found by it: not one of the
+  // record, and not one just renamed to it.
+  const moved = new Set(landed.map((l) => l.id));
+  const held = new Set([
+    ...Object.entries(folder.record).flatMap(([other, r]) => Object.entries(r.paths).filter(([id]) => other !== siteId || !moved.has(id)).map(([, path]) => path)),
+    ...landed.map((l) => l.facts.path),
+  ]);
+  // Removes the file at `path` if it is still as it was (`size`, and `seen`
+  // its time of last change when given, or else its SHA-256 `sum`), and the
+  // document's own file, `kept`, read now, still holds its bytes.
+  const remove = async (path, { size, seen, sum }, kept) => {
+    if (held.has(path)) return false;
+    const there = await fileAt(path);
+    if (!there || there.size !== size) return false;
+    if (seen !== undefined ? there.lastModified !== seen : (await reading(path, stallMs, () => sha256(there))) !== sum) return false;
+    if (!(await verified(root, kept, { stallMs }))) return false;
+    const parts = path.split("/");
+    const leaf = parts.pop();
+    let dir = root;
+    for (const part of parts) dir = await dir.getDirectoryHandle(part);
+    await writing(path, stallMs, () => dir.removeEntry(leaf));
+    return true;
+  };
+  const cleanup = async (path, facts, kept) => {
+    try {
+      return await remove(path, facts, kept);
+    } catch (e) {
+      if (!notThere(e)) failure = failure || (e instanceof FolderUnavailable ? e : new FolderUnavailable(`An old file could not be removed (${path}). Rename again to go on.`));
+      return false;
+    }
+  };
+  let entry = null, removed = 0;
   if (landed.length) {
     const ids = landed.map((l) => l.id);
-    const dates = Object.fromEntries(ids.filter((id) => site.dates[id]).map((id) => [id, site.dates[id]]));
-    entry = (await writing(SHARED_DIR, stallMs, () => writeEntry(root, siteId, landed.map(({ id, facts }) => ({ id, facts })), now, { dates, tax: site.tax.filter((id) => ids.includes(id)) }))).name;
-    // Listed in their new places: the old files go, unless a document not
-    // moved is still found by one, or it changed since it was read.
-    const moved = new Set(ids);
-    const held = new Set(Object.entries(folder.record).flatMap(([other, r]) => Object.entries(r.paths).filter(([id]) => other !== siteId || !moved.has(id)).map(([, path]) => path)));
-    for (const l of landed) {
-      if (held.has(l.from)) continue;
-      try {
-        const again = await fileAt(l.from);
-        if (!again || again.size !== l.facts.size || again.lastModified !== l.seen) continue;
-        const parts = l.from.split("/");
-        const leaf = parts.pop();
-        let dir = root;
-        for (const part of parts) dir = await dir.getDirectoryHandle(part);
-        await writing(l.from, stallMs, () => dir.removeEntry(leaf));
-      } catch (e) {
-        if (!notThere(e)) failure = failure || (e instanceof FolderUnavailable ? e : new FolderUnavailable(`An old file could not be removed (${l.from}). Rename again to go on.`));
-      }
+    const dated = Object.fromEntries(landed.map((l) => [l.id, site.dates[l.id] || l.date]).filter(([, date]) => date));
+    try {
+      entry = (await writing(SHARED_DIR, stallMs, () => writeEntry(root, siteId, landed.map(({ id, facts }) => ({ id, facts })), now, { dates: dated, tax: site.tax.filter((id) => ids.includes(id)) }))).name;
+    } catch (e) {
+      // Not listed: every old file stays, and the copies are found by name next time.
+      throw failure || e;
     }
+    for (const l of landed) await cleanup(l.from, { size: l.facts.size, seen: l.seen }, l.facts);
+  }
+  // Copies left where documents were before, by an earlier rename that could
+  // not remove them or by another computer.
+  for (const o of old) {
+    if (stopped() || failure) break;
+    const path = site && site.paths[o.id], sum = site && site.sums[o.id];
+    const k = path && folder.files[path];
+    if (k && k.sha256 === sum && (await cleanup(o.path, { size: k.size, sum }, { path, size: k.size, sha256: sum }))) removed += 1;
+    progress();
   }
   if (failure) throw failure;
-  return { renamed: landed.length, skipped, entry };
+  return { renamed: landed.length, skipped, removed, entry };
 }

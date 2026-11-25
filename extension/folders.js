@@ -74,8 +74,10 @@ const CLAIM_WAIT_MS = 30000;
 let claims = Promise.resolve();
 function claim(work) {
   const next = claims.then(() => new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("The chosen folder did not answer within 30 seconds.")), CLAIM_WAIT_MS);
-    work().then(resolve, reject).finally(() => clearTimeout(timer));
+    // A claim given up on makes no file afterwards: `live()` is asked first.
+    let live = true;
+    const timer = setTimeout(() => { live = false; reject(new Error("The chosen folder did not answer within 30 seconds.")); }, CLAIM_WAIT_MS);
+    work(() => live).then(resolve, reject).finally(() => clearTimeout(timer));
   }));
   claims = next.catch(() => {});
   return next;
@@ -160,17 +162,29 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
   let dir = root;
   for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
   const keyOf = (leaf) => [...parts, leaf].join("/");
-  const [name, handle] = await claim(async () => {
+  // The same bytes under another name of the folder: looked for before the
+  // name is claimed, so a large folder does not use up the time a claim is
+  // given, and given the same time of its own. `anyName: false`, for a file
+  // being renamed: its old name is beside it.
+  if (reuseSame && !replace && anyName) {
+    let timer;
+    const elsewhere = await Promise.race([
+      sameElsewhere(dir, fileName, blob),
+      new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error("The chosen folder did not answer within 30 seconds.")), CLAIM_WAIT_MS); }),
+    ]).finally(() => clearTimeout(timer));
+    if (elsewhere) return keyOf(elsewhere);
+  }
+  const gone = () => new Error("The chosen folder did not answer within 30 seconds.");
+  const [name, handle] = await claim(async (live) => {
     if (reuseSame && !replace) {
       const found = await nameOrSame(dir, fileName, blob, keyOf);
       if (found.same) return [found.name, null];
-      // `anyName: false`, for a file being renamed: its old name is beside it.
-      const elsewhere = anyName ? await sameElsewhere(dir, fileName, blob) : null;
-      if (elsewhere) return [elsewhere, null];
+      if (!live()) throw gone();
       underWay.set(keyOf(found.name), blob.size);
       return [found.name, await dir.getFileHandle(found.name, { create: true })];
     }
     const chosen = replace ? fileName : await freeName(dir, fileName);
+    if (!live()) throw gone();
     if (!replace) underWay.set(keyOf(chosen), blob.size);
     return [chosen, await dir.getFileHandle(chosen, { create: true })];
   });

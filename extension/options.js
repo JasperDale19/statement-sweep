@@ -185,13 +185,14 @@ $("renameFiles").addEventListener("click", async () => {
     if (plan.state === "problem") { say(plan.text); return; }
     if (plan.state !== "ok") { say("Your folder is not shared, so there is nothing to rename."); return; }
     const alone = plan.alone ? ` ${plural(plan.alone, "document")} whose title is not known ${plan.alone === 1 ? "is" : "are"} left as ${plan.alone === 1 ? "it is" : "they are"}.` : "";
-    if (!plan.count) { say(`Every document already matches the folder and file name settings.${alone}`); return; }
-    if (!confirm(`Rename ${plural(plan.count, "document")} in your folder to match the folder and file name settings?${alone}`)) { say("Nothing was renamed."); return; }
+    const old = plan.old ? ` ${plural(plan.old, "old copy", "old copies")} left under ${plan.old === 1 ? "its" : "their"} earlier ${plan.old === 1 ? "name is" : "names are"} removed.` : "";
+    if (!plan.count && !plan.old) { say(`Every document already matches the folder and file name settings.${alone}`); return; }
+    if (!confirm(`Rename ${plural(plan.count, "document")} in your folder to match the folder and file name settings?${alone}${old}`)) { say("Nothing was renamed."); return; }
     say("Renaming… Keep this page open.");
     const done = await chrome.runtime.sendMessage({ type: "renameFiles" });
     if (!done || done.busy) { say("A sync is running. Rename once it finishes."); return; }
     if (done.state !== "ok") { say(done.text || "Nothing was renamed."); return; }
-    say(`Renamed ${plural(done.renamed, "document")}.${done.problem ? ` ${done.problem}` : ""}`);
+    say(`Renamed ${plural(done.renamed, "document")}.${done.removed ? ` Removed ${plural(done.removed, "old copy", "old copies")}.` : ""}${done.problem ? ` ${done.problem}` : ""}`);
     await drawHistory();
   } catch (e) {
     say("Statement Sweep did not answer. Try again.");

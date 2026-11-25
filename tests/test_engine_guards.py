@@ -29,6 +29,20 @@ RECIPE = """(() => {
       for (const part of parts) dir = await dir.getDirectoryHandle(part);
       await dir.removeEntry(name);
     }
+    if (plan.renameOnList) {
+      // Another computer renames a file, into another folder, and lists its new place.
+      const [from, to, entry] = plan.renameOnList;
+      const at = async (path, create) => { const parts = path.split('/'); const name = parts.pop(); let dir = await navigator.storage.getDirectory();
+        for (const part of parts) dir = await dir.getDirectoryHandle(part, { create }); return [dir, name]; };
+      const [fromDir, fromName] = await at(from, false);
+      const body = await (await (await fromDir.getFileHandle(fromName)).getFile()).text();
+      for (const [path, text] of [[to, body], ['Chosen/Statement Sweep History/renamed.json', entry]]) {
+        const [dir, name] = await at(path, true);
+        const w = await (await dir.getFileHandle(name, { create: true })).createWritable(); await w.write(text); await w.close();
+      }
+      await fromDir.removeEntry(fromName);
+      plan.renameOnList = null;
+    }
     return { state: 'ok', docs: plan.docs, more: Boolean(plan.more) };
   };
   const fetchPdf = async (doc) => {
@@ -198,6 +212,11 @@ F2 = "Statement Sweep/Fake Bank/2026-10-28 Fake Statement.pdf"
 OTHER_PDF = "%PDF-1.4 something else\n%%EOF"
 
 
+# What an entry lists of a document saved in this run: its title too.
+def listed(path, text=None):
+    return {**facts(path, text or PDF), "title": "Statement"}
+
+
 def facts(path, text=PDF):
     return {"path": path, "size": len(text.encode()), "sha256": hashlib.sha256(text.encode()).hexdigest()}
 
@@ -227,7 +246,7 @@ def test_a_document_another_computer_saved_into_the_folder_is_not_saved_again(en
     assert got["local"]["seen:fake"] == ["f2"]
     # A new entry, holding only what this run saved into the folder, and how to check it.
     docs, checked = written(got)
-    assert [e["sites"] for e in docs] == [{"fake": ["f2"]}] and docs[0]["files"] == {"fake": {"f2": facts(F2, OTHER_PDF)}}
+    assert [e["sites"] for e in docs] == [{"fake": ["f2"]}] and docs[0]["files"] == {"fake": {"f2": listed(F2, OTHER_PDF)}}
     assert got["files"][HIST + "theirs.json"] == other_copy(["f1"])
     assert re.search(r"Folder read before the run: 1 history file\(s\), 1 document\(s\) in the folder, 1 file\(s\) read to check them, in [\d,]+ ms\.", summary_of(got))
     assert "1 already in your chosen folder, saved by another computer." in site
@@ -279,6 +298,16 @@ def test_a_document_removed_after_the_folder_was_read_is_saved(engine):
     assert got["board"]["fake"]["text"] == "1 new.", got["board"]
     assert got["local"]["seen:fake"] == ["f1"] and "Chosen/" + F1 in pdfs
     assert "already in your chosen folder" not in site
+
+
+def test_a_document_another_computer_renamed_meanwhile_is_not_saved_again(engine):
+    # Renamed into another folder after this run read the folder, and listed there.
+    moved = "Statement Sweep/Elsewhere/Fake 2026-09-28.pdf"
+    got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28")], "renameOnList": ["Chosen/" + F1, "Chosen/" + moved, other_copy(["f1"], path=moved)]},
+                            shared={"theirs.json": other_copy(["f1"]), F1: PDF})
+    assert got["board"]["fake"]["text"] == "Nothing new.", got["board"]
+    assert pdfs == ["Chosen/" + moved] and "seen:fake" not in got["local"]
+    assert "Folder read again, since a file was moved or removed" in summary_of(got)
 
 
 def test_a_folder_that_cannot_be_read_saves_nothing_and_says_why(engine):
@@ -369,20 +398,20 @@ def test_a_document_already_in_the_folder_with_the_same_bytes_is_not_saved_besid
     got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28")]}, shared={F1: PDF})
     assert got["board"]["fake"]["text"] == "1 new."
     assert pdfs == ["Chosen/" + F1]
-    assert [e["files"] for e in written(got)[0]] == [{"fake": {"f1": facts(F1)}}]
+    assert [e["files"] for e in written(got)[0]] == [{"fake": {"f1": listed(F1)}}]
 
 
 def test_a_document_saved_beside_another_of_its_name_is_listed_where_it_went(engine):
     got, site, pdfs = sweep(engine, {"docs": [doc("f1", date="2026-09-28")]}, shared={F1: OTHER_PDF})
     beside = F1.replace(".pdf", " (1).pdf")
     assert "Chosen/" + beside in pdfs
-    assert [e["files"] for e in written(got)[0]] == [{"fake": {"f1": facts(beside)}}]
+    assert [e["files"] for e in written(got)[0]] == [{"fake": {"f1": listed(beside)}}]
 
 
 def test_a_document_saved_through_downloads_is_listed_with_its_own_bytes(engine):
     got, _, pdfs = sweep(engine, {"docs": [doc("c1", "click")], "clickBody": PDF})
     assert got["board"]["fake"]["text"] == "1 new."
-    assert [e["files"] for e in written(got)[0]] == [{"fake": {"c1": facts(F2)}}]
+    assert [e["files"] for e in written(got)[0]] == [{"fake": {"c1": listed(F2)}}]
 
 
 ASK = """async ({ text, pdf, types }) => {

@@ -12,7 +12,7 @@ import { backfillFor, documentDate, folderKey, isDue, isTaxDocument, keysFor, lo
 import { amount, cleanUrl, errorText, makeLogs } from "./log.js";
 import { OFFERS_WAIT, hasOffers, makeOffers, offersWanted, offersWords } from "./offers.js";
 import { addFound, estimateNew, foundKey, foundOf, siteProgress } from "./progress.js";
-import { FolderUnavailable, Stopped, factsOf, reconcile, renamePlan, renameSite, sharingOn, stillThere, verified, writeChecked, writeEntry } from "./shared-history.js";
+import { FolderUnavailable, Stopped, factsOf, mutationsSettled, oldCopies, reconcile, renamePlan, renameSite, sharingOn, stillThere, verified, writeChecked, writeEntry } from "./shared-history.js";
 
 // The run's logs (log.js): what each site did and why it stopped, written to
 // each site's Logs folder as the run goes. `note` adds one line for a site.
@@ -1123,7 +1123,7 @@ async function sweep(provider, together = false, entry = { destination: null, sa
   if (sharing && !(await folderIs(destination))) {
     return say(provider.id, "bad", "Nothing was saved. Your folder was changed, or could not be read. Run it again.");
   }
-  const folder = sharing ? folderNow : null;
+  let folder = sharing ? folderNow : null;
   const key = `seen:${provider.id}`;
   const record = (await chrome.storage.local.get(key))[key];
   const seen = new Set(record || []);
@@ -1237,9 +1237,21 @@ async function sweep(provider, together = false, entry = { destination: null, sa
     // Looked at once more, here, so one removed since the folder was read is saved.
     let theirs = new Set();
     if (folder) {
-      const paths = (folder.record[provider.id] || {}).paths || {};
+      const claimed = () => { const paths = (folder.record[provider.id] || {}).paths || {}; return unsaved.filter((d) => paths[d.id]).map((d) => d.id); };
       try {
-        theirs = await stillThere(destination, folder, provider.id, unsaved.filter((d) => paths[d.id]).map((d) => d.id));
+        const asked = claimed();
+        theirs = await stillThere(destination, folder, provider.id, asked);
+        if (theirs.size < asked.length) {
+          // A file is not where it was when the folder was read. Another
+          // computer may have renamed it (Rename to Match) and listed its new
+          // place: the folder is read again before anything is saved.
+          const again = await reconcileFolder("again, since a file was moved or removed", () => stopAsked);
+          if (again.state !== "ok" || !(await folderIs(destination))) {
+            return say(provider.id, "bad", `${count} saved. ${again.text || "Your folder could not be read again. Run it again."}`);
+          }
+          folder = folderNow;
+          theirs = await stillThere(destination, folder, provider.id, claimed());
+        }
       } catch (e) {
         logs.error(provider, "looking in the folder", e);
         return say(provider.id, "bad", `${count} saved. ${e instanceof FolderUnavailable ? e.message : `Your folder could not be read. ${errorText(e).split("\n")[0]}`}`);
@@ -1717,8 +1729,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (state.state !== "ok" || !folder) return state.state === "problem" ? state : { state: "none" };
       const { naming } = await chrome.storage.local.get("naming");
       const plan = renamePlan(folder.record, PROVIDERS.filter((p) => !p.added), naming);
-      if (message.type === "renamePreview") return { state: "ok", count: plan.moves.length, alone: plan.alone };
-      const total = plan.moves.length;
+      plan.old = await oldCopies(folder.handle, folder, plan.old);
+      if (message.type === "renamePreview") return { state: "ok", count: plan.moves.length, alone: plan.alone, old: plan.old.length };
+      const total = plan.moves.length + plan.old.length;
       let done = 0, told = 0, renamed = 0, skipped = 0, problem = "";
       const progress = () => {
         done += 1;
@@ -1727,22 +1740,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sayFolder({ state: "renaming", done, total, name: folder.handle.name });
       };
       logs.runLine(`Renaming asked for in Settings: ${total} document(s) to rename, ${plan.alone} left as they are (title not known).`);
-      for (const site of [...new Set(plan.moves.map((m) => m.site))]) {
+      let removed = 0;
+      for (const site of [...new Set([...plan.moves, ...plan.old].map((m) => m.site))]) {
         try {
-          const r = await renameSite(folder.handle, folder, site, plan.moves.filter((m) => m.site === site), { progress });
+          const r = await renameSite(folder.handle, folder, site, plan.moves.filter((m) => m.site === site), { progress, old: plan.old.filter((o) => o.site === site) });
           renamed += r.renamed;
           skipped += r.skipped;
-          logs.runLine(`${site}: ${r.renamed} document(s) renamed${r.skipped ? `, ${r.skipped} changed since the folder was read and left` : ""}${r.entry ? `, listed in ${r.entry}` : ""}.`);
+          removed += r.removed;
+          logs.runLine(`${site}: ${r.renamed} document(s) renamed${r.skipped ? `, ${r.skipped} changed since the folder was read and left` : ""}${r.removed ? `, ${r.removed} old file(s) removed` : ""}${r.entry ? `, listed in ${r.entry}` : ""}.`);
         } catch (e) {
           problem = e instanceof FolderUnavailable ? e.message : `Renaming stopped: ${errorText(e).split("\n")[0]}`;
           logs.runLine(`${site}: ${problem}`, "WARN");
           break;
         }
       }
+      // A write given up on may still be going: nothing else starts until
+      // it has ended, or five minutes have passed.
+      await Promise.race([mutationsSettled(), new Promise((r) => setTimeout(r, 5 * 60 * 1000))]);
       // What is kept of the folder is of its old names: read again.
       await reconcileFolder("after renaming");
       await checkDue();
-      return { state: "ok", renamed, skipped, alone: plan.alone, problem };
+      return { state: "ok", renamed, skipped, removed, alone: plan.alone, problem };
     } finally {
       renaming = false;
       clearInterval(keepAlive);
