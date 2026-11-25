@@ -44,6 +44,10 @@ Chase business cards are kept apart: each is added to only by its own site.
 
 - The documents it saves, in your Downloads folder or a folder you choose.
 - A list of which documents it has already saved, so they are not saved twice.
+  With a shared folder, also what that folder holds (the same details as its
+  history files, below), the size, date and fingerprint of its files, so
+  they are not read again each time, and a note of documents just saved
+  there until its history file is written.
   This holds each document's date and an identifier for it, which for some
   sites includes an account number, and notes which documents are tax forms.
 - From those dates, how often each site sends a document, so it can say which
@@ -74,8 +78,22 @@ Chase business cards are kept apart: each is added to only by its own site.
   #####1234). It never holds a page's text, your cookies, or what is in a
   document. Old logs are removed after 30 runs per site.
 
+- With a folder chosen and **History File** on (the default), lists of the
+  documents saved into that folder: each one's identifier and date, which
+  are tax forms, and where in the folder it was saved, with its size and a
+  fingerprint (SHA-256) of it, and the day each site was last checked, in
+  small files in the folder's
+  `Statement Sweep History` folder. They are there so Statement Sweep on
+  another computer using the same folder does not save them again. Never
+  your folder and file name settings or which sites are switched off. If the
+  folder is in iCloud Drive, Google Drive or another synced folder, these
+  files are synced and shared with it like your documents are, and stay
+  there after the extension is removed until you delete them.
+
 All of this stays in your browser's storage and the folders above. Removing
-the extension deletes everything except the documents you saved.
+the extension deletes what is in your browser's storage. What it wrote to
+your folders stays until you delete it: the documents you saved, the Logs
+folders, and the Statement Sweep History folder.
 
 ## Why it asks for its permissions
 

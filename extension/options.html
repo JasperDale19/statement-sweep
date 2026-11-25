@@ -127,6 +127,22 @@
       </div>
       <p class="hint" id="inboxhint"></p>
     </div>
+    <div class="row" id="shareRow">
+      <span>History File</span>
+      <div class="check">
+        <input id="shareHistory" type="checkbox">
+        <label for="shareHistory">Share what is saved here with other copies</label>
+      </div>
+      <p class="hint">Makes this folder the one record of what is saved, for Statement Sweep on every computer that chooses it: none saves a document another already has. Its Statement Sweep History folder lists each document's date and id, which for some sites includes an account number.</p>
+    </div>
+    <div class="row" id="renameRow" hidden>
+      <span>Saved Files</span>
+      <div class="choice">
+        <span id="renameStatus" role="status"></span>
+        <button class="secondary" id="renameFiles" type="button">Rename to Match…</button>
+      </div>
+      <p class="hint">Renames the documents already in this folder to the folder and file name settings saved below, for every computer that shares it. It says how many first. Nothing is renamed by itself when you change the settings.</p>
+    </div>
     <div class="row">
       <label for="base">Main Folder</label>
       <input id="base" spellcheck="false" autocomplete="off">
@@ -246,7 +262,7 @@
         <span class="pair"><button class="secondary" id="exportHistory" type="button">Export History…</button><button class="secondary" id="importHistory" type="button">Import History…</button></span>
         <input id="historyFile" type="file" accept=".json,application/json" hidden aria-label="History file">
       </div>
-      <p class="hint">What has been saved, so nothing is saved twice. Bring it to another copy of Statement Sweep; choose your folder again there.</p>
+      <p class="hint">What has been saved, so nothing is saved twice. Bring it to another copy of Statement Sweep; choose your folder again there. Copies that choose the same folder, with History File on, share it by themselves.</p>
     </div>
     <div class="row">
       <span>Run Logs</span>

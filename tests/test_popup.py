@@ -10,6 +10,9 @@ TYPES = {".js": "text/javascript", ".html": "text/html", ".css": "text/css"}
 CHROME = """
 const saved = JSON.parse(sessionStorage.getItem('state') || '{}');
 window.__session = saved.board ? {board: saved.board} : {};
+if (saved.folderSync) window.__session.folderSync = saved.folderSync;
+// The popup asks the engine to read the shared folder as it opens.
+window.__asked = [];
 window.__local = Object.assign(saved.off ? {off: saved.off} : {}, saved.local || {});
 window.__sent = []; window.__listeners = [];
 const area = (name) => ({
@@ -18,7 +21,7 @@ const area = (name) => ({
 });
 Object.defineProperty(window, 'chrome', {value: {
   storage: {session: area('__session'), local: area('__local')},
-  runtime: {sendMessage: (m) => { __sent.push(m); return Promise.resolve(); }, openOptionsPage: () => { __sent.push('options'); },
+  runtime: {sendMessage: (m) => { if (m && m.type === 'syncHistory') { __asked.push(m); return Promise.resolve(); } __sent.push(m); return Promise.resolve(); }, openOptionsPage: () => { __sent.push('options'); },
             onMessage: {addListener: (f) => __listeners.push(f)}, getURL: (p) => 'chrome-extension://sweep' + p},
   tabs: {update: async (id, o) => { __sent.push(['tab', id, o]); return {id, windowId: 70}; }},
   windows: {update: async (id, o) => { __sent.push(['window', id, o]); return {id}; }},
@@ -47,10 +50,10 @@ def st(state, text, tab=None):
     return {"state": state, "text": text, "at": 1, **({"tab": tab} if tab is not None else {})}
 
 
-def show(tab, board=None, off=None, local=None, today="2026-11-09T12:00:00"):
+def show(tab, board=None, off=None, local=None, today="2026-11-09T12:00:00", folder=None):
     tab.clock.set_fixed_time(today)
     tab.goto(BASE)
-    tab.evaluate("s => sessionStorage.setItem('state', JSON.stringify(s))", {"board": board or {}, "off": off or [], "local": local or {}})
+    tab.evaluate("s => sessionStorage.setItem('state', JSON.stringify(s))", {"board": board or {}, "off": off or [], "local": local or {}, "folderSync": folder})
     tab.goto(BASE + "popup.html")
     tab.wait_for_selector("#scroll li")
 
@@ -450,3 +453,77 @@ def test_a_site_with_no_gap_has_nothing_to_dismiss(tab):
     show(tab, local=LATE)
     assert tab.locator("li:has(button[aria-label='Run Chase']) button.dismiss").count() == 0
 
+
+
+# -- the folder shared with other computers -------------------------------------------
+
+MONTHS = [f"2026-{m:02d}-28" for m in range(1, 11)]
+THEIRS = {"ids": MONTHS, "dates": {d: d for d in MONTHS}, "tax": [], "checked": ""}
+
+
+def test_the_popup_asks_for_the_shared_folder_to_be_read_as_it_opens(tab):
+    show(tab)
+    tab.wait_for_function("__asked.length === 1")
+    assert tab.evaluate("__asked") == [{"type": "syncHistory"}]
+
+
+def test_with_no_shared_folder_there_is_no_folder_line(tab):
+    show(tab)
+    assert tab.locator("#folderLine").is_hidden()
+
+
+@pytest.mark.parametrize("sync, says, kind", [
+    ({"state": "checking", "done": 0, "total": 0}, "Checking your folder…", ""),
+    ({"state": "checking", "done": 412, "total": 1366}, "Checking your folder… 412 of 1,366", ""),
+    ({"state": "ok", "documents": 1366, "entries": 28, "at": 5, "name": "Statement Sweep"}, "In sync with “Statement Sweep”: 1,366 documents saved, on this computer or another.", ""),
+    ({"state": "ok", "documents": 1, "entries": 1, "at": 5, "name": "Docs"}, "In sync with “Docs”: 1 document saved, on this computer or another.", ""),
+    ({"state": "problem", "text": "Your folder could not be read. Nothing was saved."}, "Your folder could not be read. Nothing was saved.", "problem"),
+    ({"state": "renaming", "done": 40, "total": 1243}, "Renaming your files… 40 of 1,243", ""),
+])
+def test_the_folder_line_says_how_the_shared_folder_stands(tab, sync, says, kind):
+    show(tab, folder=sync)
+    assert tab.inner_text("#folderLine") == says
+    assert tab.get_attribute("#folderLine", "data-kind") == kind
+
+
+def test_a_site_saved_only_by_another_computer_shows_as_saved_and_is_not_ticked(tab):
+    # Ten monthly statements, all in the shared folder, none saved here.
+    show(tab, local={"folder:amex": THEIRS}, today="2026-11-09T12:00:00")
+    row = tab.locator("li", has_text="American Express")
+    words = row.text_content()
+    assert "Up to date" in words or "Next" in words or "10" in words, words
+    assert not row.locator("input[type=checkbox]").is_checked()
+    # A site with nothing saved anywhere is still asked for.
+    assert tab.locator("li", has_text="Alpaca").locator("input[type=checkbox]").is_checked()
+
+
+def test_the_ticks_follow_the_folder_once_it_is_read_unless_you_chose_them(tab):
+    show(tab)
+    amex = tab.locator("li", has_text="American Express").locator("input[type=checkbox]")
+    assert amex.is_checked()
+    # The engine reads the folder: American Express turns out to be saved.
+    tab.evaluate("""(theirs) => { __local['folder:amex'] = theirs; __session.folderSync = {state: 'ok', documents: 10, entries: 1, at: 9, name: 'S'};
+      __listeners.forEach(f => f({type: 'board'})); }""", THEIRS)
+    tab.wait_for_function("document.getElementById('folderLine').textContent.startsWith('In sync')")
+    assert not tab.locator("li", has_text="American Express").locator("input[type=checkbox]").is_checked()
+
+
+def test_ticks_you_chose_are_kept_when_the_folder_is_read(tab):
+    show(tab)
+    tab.locator("li", has_text="Alpaca").locator("input[type=checkbox]").uncheck()
+    tab.evaluate("""(theirs) => { __local['folder:amex'] = theirs; __session.folderSync = {state: 'ok', documents: 10, entries: 1, at: 9, name: 'S'};
+      __listeners.forEach(f => f({type: 'board'})); }""", THEIRS)
+    tab.wait_for_function("document.getElementById('folderLine').textContent.startsWith('In sync')")
+    assert tab.locator("li", has_text="American Express").locator("input[type=checkbox]").is_checked()
+    assert not tab.locator("li", has_text="Alpaca").locator("input[type=checkbox]").is_checked()
+
+
+def test_a_folder_read_during_a_sync_moves_the_ticks_once_the_sync_is_done(tab):
+    show(tab, board={"alpaca": st("working", "Looking…")})
+    tab.evaluate("""(theirs) => { __local['folder:amex'] = theirs; __session.folderSync = {state: 'ok', documents: 10, entries: 1, at: 9, name: 'S'};
+      __listeners.forEach(f => f({type: 'board'})); }""", THEIRS)
+    tab.wait_for_function("document.getElementById('folderLine').textContent.startsWith('In sync')")
+    # The sync ends: the ticks now follow what the folder holds.
+    tab.evaluate("__session.board = {}; __listeners.forEach(f => f({type: 'board'}))")
+    tab.wait_for_function("document.getElementById('go').textContent.startsWith('Get New Documents')")
+    assert not tab.locator("li", has_text="American Express").locator("input[type=checkbox]").is_checked()

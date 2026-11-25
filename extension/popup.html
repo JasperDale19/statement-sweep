@@ -10,6 +10,8 @@
   #summary { grid-column: 1; margin: 0; color: var(--secondary); font-size: 12px; line-height: 16px; }
   #summary[data-kind=attention] { color: var(--orange); font-weight: 600; }
   #summary[data-kind=stopped] { color: var(--red); }
+  #folderLine { grid-column: 1 / -1; margin: 6px 0 0; color: var(--secondary); font-size: 11px; line-height: 14px; }
+  #folderLine[data-kind=problem] { color: var(--red); }
   #settings { grid-column: 2; grid-row: 1 / 3; align-self: start; }
   #go { grid-column: 1 / 3; margin-top: 10px; width: 100%; }
   /* Progress: a bar for the whole sync under the summary, and one under each
@@ -109,6 +111,7 @@
     </button>
     <div class="bar" id="allbar" role="progressbar" aria-label="Whole sync" hidden><div></div></div>
     <button class="primary" id="go" type="button">Get New Documents</button>
+    <p id="folderLine" role="status" hidden></p>
   </header>
   <main id="scroll" tabindex="-1"></main>
   <footer id="offersFoot" hidden>

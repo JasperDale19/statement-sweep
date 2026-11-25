@@ -463,4 +463,42 @@ def test_the_record_reads_arrivals_and_checks(tab):
     stored = {"seen:s": ["a"], "dates:s": {"a": "2026-10-01"}, "arrived:s": {"a": "2026-10-09", "b": "nope"}, "checked:s": "2026-11-01"}
     got = call(tab, "recordOf", stored, "s")
     assert got["arrived"] == {"a": "2026-10-09"} and got["checked"] == "2026-11-01"
-    assert call(tab, "keysFor", "s")[-2:] == ["arrived:s", "checked:s"]
+    assert call(tab, "keysFor", "s")[-3:] == ["arrived:s", "checked:s", "folder:s"]
+
+
+# -- a folder shared with other computers --------------------------------------------
+
+FOLDER = {"ids": ["b", "c"], "dates": {"b": "2026-09-01", "c": "2026-10-01", "ghost": "2020-01-01"}, "tax": ["c", "ghost"], "checked": "2026-11-20"}
+
+
+def test_what_is_in_the_shared_folder_counts_as_saved(tab):
+    stored = {"seen:s": ["a"], "dates:s": {"a": "2026-08-01"}, "tax:s": ["a"], "checked:s": "2026-11-01", "folder:s": FOLDER}
+    got = call(tab, "recordOf", stored, "s")
+    assert got["ids"] == ["a", "b", "c"]
+    # Only the folder's own documents bring a date or a tax mark.
+    assert got["dates"] == {"a": "2026-08-01", "b": "2026-09-01", "c": "2026-10-01"}
+    assert sorted(got["tax"]) == ["a", "c"]
+    # Whichever computer checked the site last.
+    assert got["checked"] == "2026-11-20"
+    assert call(tab, "recordOf", {**stored, "checked:s": "2026-11-22"}, "s")["checked"] == "2026-11-22"
+
+
+def test_a_site_saved_only_by_another_computer_has_its_schedule_here(tab):
+    days = [f"2026-{m:02d}-01" for m in range(1, 11)]
+    folder = {"ids": days, "dates": {d: d for d in days}, "tax": [], "checked": ""}
+    provider = {"id": "s", "postsAfterDays": 0}
+    got = call(tab, "standingOf", {"folder:s": folder}, provider, "2026-10-10")
+    assert got["documents"] == 10 and got["status"] == "current", got
+    assert call(tab, "standingOf", {}, provider, "2026-10-10")["status"] == "never"
+
+
+def test_the_folders_record_is_never_copied_into_this_copys_own(tab):
+    stored = {"seen:s": ["2026-08-01"], "folder:s": FOLDER}
+    assert call(tab, "backfillFor", stored, "s") == {"dates:s": {"2026-08-01": "2026-08-01"}}
+    assert call(tab, "recordOf", stored, "s", {"folder": False})["ids"] == ["2026-08-01"]
+
+
+def test_a_folder_record_in_the_wrong_form_is_ignored(tab):
+    for bad in ["nope", ["x"], {"ids": "x", "dates": 3, "tax": "y", "checked": "soon"}]:
+        got = call(tab, "recordOf", {"seen:s": ["a"], "folder:s": bad}, "s")
+        assert got["ids"] == ["a"] and got["checked"] == ""

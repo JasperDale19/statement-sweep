@@ -401,20 +401,34 @@ export const standingOf = (stored, provider, today) => siteStatus(recordOf(store
 // -- the stored record --------------------------------------------------------------
 // chrome.storage.local keys for one site: the ids saved, their dates, and
 // which of them are tax forms.
-export const keysFor = (id) => [`seen:${id}`, `dates:${id}`, `tax:${id}`, `gapsOk:${id}`, `arrived:${id}`, `checked:${id}`];
+// `folder:<id>` is what is in the folder shared with other computers
+// (shared-history.js), kept by the engine: {ids, dates, tax, checked}.
+export const folderKey = (id) => `folder:${id}`;
+export const keysFor = (id) => [`seen:${id}`, `dates:${id}`, `tax:${id}`, `gapsOk:${id}`, `arrived:${id}`, `checked:${id}`, folderKey(id)];
 
 // A site's record as stored, with what its ids say filled in where nothing is
 // stored: a date an id holds, and a tax form an id names. Read-only, so it is
 // the same however often it runs.
-export function recordOf(stored, id) {
-  const ids = Array.isArray(stored[`seen:${id}`]) ? stored[`seen:${id}`].filter((x) => typeof x === "string") : [];
+//
+// With a folder shared with other computers, what is in that folder counts
+// too (`folder`): its documents, their dates and tax marks, and the day any
+// computer last checked the site. So each computer sees one record.
+export function recordOf(stored, id, { folder = true } = {}) {
+  const shared = folder && stored[folderKey(id)] && typeof stored[folderKey(id)] === "object" ? stored[folderKey(id)] : {};
+  const sharedIds = Array.isArray(shared.ids) ? shared.ids.filter((x) => typeof x === "string") : [];
+  const own = Array.isArray(stored[`seen:${id}`]) ? stored[`seen:${id}`].filter((x) => typeof x === "string") : [];
+  const ids = [...new Set([...own, ...sharedIds])];
   const kept = stored[`dates:${id}`];
   const dates = {};
   if (kept && typeof kept === "object" && !Array.isArray(kept)) {
     for (const [k, v] of Object.entries(kept)) if (dayOf(v) !== null) dates[k] = v;
   }
+  if (shared.dates && typeof shared.dates === "object") {
+    for (const x of sharedIds) if (!(x in dates) && dayOf(shared.dates[x]) !== null) dates[x] = shared.dates[x];
+  }
   for (const x of ids) if (!(x in dates)) { const d = dateFromId(x); if (d) dates[x] = d; }
   const tax = new Set(Array.isArray(stored[`tax:${id}`]) ? stored[`tax:${id}`].filter((x) => typeof x === "string") : []);
+  if (Array.isArray(shared.tax)) for (const x of shared.tax) if (sharedIds.includes(x)) tax.add(x);
   for (const x of ids) if (isTaxText(x)) tax.add(x);
   const gapsOk = Array.isArray(stored[`gapsOk:${id}`]) ? stored[`gapsOk:${id}`].filter((x) => typeof x === "string") : [];
   const arrived = {};
@@ -422,14 +436,17 @@ export function recordOf(stored, id) {
   if (kept2 && typeof kept2 === "object" && !Array.isArray(kept2)) {
     for (const [k, v] of Object.entries(kept2)) if (dayOf(v) !== null) arrived[k] = v;
   }
-  const checked = dayOf(stored[`checked:${id}`]) !== null ? stored[`checked:${id}`] : "";
+  const mine = dayOf(stored[`checked:${id}`]) !== null ? stored[`checked:${id}`] : "";
+  const theirs = dayOf(shared.checked) !== null ? shared.checked : "";
+  const checked = theirs && (!mine || dayOf(theirs) > dayOf(mine)) ? theirs : mine;
   return { ids, dates, tax: [...tax], gapsOk, arrived, checked };
 }
 
 // What recordOf would add to what is stored, for the engine to keep: an empty
 // object when nothing is missing, so a second pass writes nothing.
+// Only this copy's own record: what the folder holds is never copied into it.
 export function backfillFor(stored, id) {
-  const { dates, tax } = recordOf(stored, id);
+  const { dates, tax } = recordOf(stored, id, { folder: false });
   const kept = stored[`dates:${id}`] && typeof stored[`dates:${id}`] === "object" ? stored[`dates:${id}`] : {};
   const keptTax = Array.isArray(stored[`tax:${id}`]) ? stored[`tax:${id}`] : [];
   const writes = {};

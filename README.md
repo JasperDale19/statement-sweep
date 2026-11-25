@@ -93,6 +93,31 @@ Files go to Downloads under `Statement Sweep/`, one folder per site.
 names or sends everything to any folder you choose. It also switches sites
 off and turns on card offers.
 
+**Using more than one computer.** Choose the same synced folder (in iCloud
+Drive or Google Drive, say) in Statement Sweep on each computer, and they
+work as one: each knows what is saved, each site's schedule and what is
+due, with nothing to export or import. The popup shows "In sync with" the
+folder and how many documents it holds.
+
+- Each site that saves documents adds a small file listing them, with where
+  each was saved and a fingerprint of it, to the folder's
+  `Statement Sweep History` folder. A statement counts as saved only when
+  that very file is in the folder, so one that has not synced yet is saved
+  rather than missed.
+- If the folder cannot be read, because it is still downloading, say,
+  nothing is saved and the popup says why. Run it again in a moment.
+- A statement already in the folder under another file name is recognised
+  by its contents and not saved again.
+- The folder and file name settings are set on each computer; set them the
+  same. After changing them, Rename to Match in Settings renames what is
+  already saved, for every computer. It says how many files first, and
+  leaves alone any whose title it cannot know.
+- Every computer needs the same version of Statement Sweep or newer.
+- Documents a computer saved before the folder was chosen are not listed
+  until they are in the folder and saved again; one with the same contents
+  is recognised and not copied. Sites you added with Add This Site are not
+  shared. **History File** in Settings turns all of this off.
+
 ## Card offers
 
 For American Express, Chase and Chase Business, Statement Sweep can add your

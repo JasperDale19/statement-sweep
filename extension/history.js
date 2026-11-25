@@ -13,6 +13,10 @@
 // from `dates:<site id>` and `tax:<site id>`, so the other copy knows what is
 // due (cadence.js) from the first day.
 //
+// The same format, with where each document was saved (`files`) and the day
+// a site was last checked (`checked`), is written to and read from a folder
+// shared with other computers (shared-history.js).
+//
 // An import only ever adds. Nothing already recorded is removed, so a file
 // from an older copy can never make a document be saved twice.
 import { PROVIDERS } from "./providers/index.js";
@@ -25,7 +29,7 @@ export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IDS = 20000;
 const MAX_ID_LENGTH = 1000;
 const MAX_PATTERN_LENGTH = 1000;
-const KEYS = ["format", "version", "exportedAt", "sites", "naming", "off", "dates", "tax"];
+const KEYS = ["format", "version", "exportedAt", "sites", "naming", "off", "dates", "tax", "files", "checked"];
 const SEEN = "seen:";
 const DATES = "dates:";
 const TAX = "tax:";
@@ -134,12 +138,16 @@ function readNaming(given) {
 // Reads a history file, strictly. Returns { ok: true, sites, unknown, naming,
 // off, exportedAt } or { ok: false, problem } saying in plain words what is wrong.
 export function readHistory(text) {
+  // A file from a newer Statement Sweep is said so (`newer`), for a caller
+  // that must not go on as if it held nothing.
+  let newer = false;
   try {
     if (typeof text !== "string" || text.length > MAX_FILE_BYTES) refuse("This file is too large to be a Statement Sweep history file.");
     let data;
     try { data = JSON.parse(text); } catch (e) { refuse("This is not a Statement Sweep history file. It could not be read."); }
     if (!isObject(data) || data.format !== FORMAT) refuse("This is not a Statement Sweep history file.");
     if (typeof data.version !== "number") refuse("This history file does not say which version it is.");
+    if (data.version > VERSION) newer = true;
     if (data.version > VERSION) refuse(`This history file was made by a newer Statement Sweep (version ${data.version}). Update this copy and try again.`);
     if (data.version !== VERSION) refuse(`This history file is version ${data.version}, which this copy cannot read.`);
     for (const key of Object.keys(data)) if (!KEYS.includes(key)) refuse(`This history file has a part this version does not know: “${key}”.`);
@@ -180,15 +188,47 @@ export function readHistory(text) {
         tax[id] = [...new Set(ids)];
       }
     }
+    // Optional, in the entries of a shared folder (shared-history.js): where
+    // each document was saved in that folder, its size and its SHA-256.
+    const files = {};
+    if (data.files !== undefined && data.files !== null) {
+      if (!isObject(data.files)) refuse("This history file's list of saved files is not in the right form.");
+      for (const [id, byDoc] of Object.entries(data.files)) {
+        if (!known.has(id)) { if (!unknown.includes(id)) unknown.push(id); continue; }
+        const name = nameOf(id);
+        if (!isObject(byDoc) || Object.keys(byDoc).length > MAX_IDS) refuse(`${name}: its list of saved files is not in the right form.`);
+        for (const [doc, f] of Object.entries(byDoc)) {
+          const ok = doc && doc.length <= MAX_ID_LENGTH && isObject(f) && typeof f.path === "string" && f.path.length <= MAX_ID_LENGTH
+            && !f.path.startsWith("/") && !f.path.split("/").some((part) => !part || part === "." || part === "..")
+            && Number.isSafeInteger(f.size) && f.size >= 0 && typeof f.sha256 === "string" && /^[0-9a-f]{64}$/.test(f.sha256);
+          if (!ok) refuse(`${name}: its list of saved files has an entry that is not a saved file.`);
+        }
+        // A document's title, when the entry gives it, is what renaming its
+        // file to another pattern goes by (shared-history.js).
+        files[id] = Object.fromEntries(Object.entries(byDoc).map(([doc, f]) => [doc, { path: f.path, size: f.size, sha256: f.sha256,
+          ...(typeof f.title === "string" && f.title.length <= MAX_ID_LENGTH ? { title: f.title } : {}) }]));
+      }
+    }
+    // Optional, in a shared folder: the day each site was last looked at with
+    // nothing left to save, {site: "YYYY-MM-DD"}.
+    const checked = {};
+    if (data.checked !== undefined && data.checked !== null) {
+      if (!isObject(data.checked)) refuse("This history file's list of checked sites is not in the right form.");
+      for (const [id, when] of Object.entries(data.checked)) {
+        if (!known.has(id)) { if (!unknown.includes(id)) unknown.push(id); continue; }
+        if (typeof when !== "string" || dayOf(when) === null) refuse(`${nameOf(id)}: the day it was checked is not a date (YYYY-MM-DD).`);
+        checked[id] = when;
+      }
+    }
     let naming = null, off = null;
     if (data.naming !== undefined && data.naming !== null) naming = readNaming(data.naming);
     if (data.off !== undefined && data.off !== null) {
       if (!Array.isArray(data.off) || data.off.length > MAX_IDS || !data.off.every((v) => typeof v === "string")) refuse("This history file's list of switched-off sites is not in the right form.");
       off = [...new Set(data.off.filter((id) => known.has(id)))];
     }
-    return { ok: true, sites, unknown, naming, off, dates, tax, exportedAt: data.exportedAt || "" };
+    return { ok: true, sites, unknown, naming, off, dates, tax, files, checked, exportedAt: data.exportedAt || "" };
   } catch (e) {
-    if (e instanceof Refused) return { ok: false, problem: e.message };
+    if (e instanceof Refused) return { ok: false, problem: e.message, ...(newer ? { newer: true } : {}) };
     throw e;
   }
 }

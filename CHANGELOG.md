@@ -5,6 +5,35 @@ What changed for people using Statement Sweep, newest first. The version is
 
 ## Unreleased
 
+- Two documents saved at the same moment under the same file name are
+  both kept: the second gets a name of its own instead of being written
+  over the first.
+- Statement Sweep on two or more computers works as one. Choose the same
+  synced folder on each, such as one in iCloud Drive or Google Drive, and
+  every computer knows what is saved, each site's schedule and what is due,
+  with nothing to export or import. The popup says "In sync with" the
+  folder and how many documents it holds.
+  - Each site that saves documents adds a small file listing them, with
+    where each was saved and a fingerprint of it, to the folder's
+    `Statement Sweep History` folder. A site looked at with nothing new is
+    noted there too, so another computer does not ask for it again that day.
+  - A statement already in the folder under a different file name, because
+    another computer or an older file name pattern named it, is recognised
+    by its contents and not saved a second time.
+  - Settings has Rename to Match, beside the folder: it renames the
+    documents already saved to the folder and file name settings of now,
+    for every computer sharing the folder. It says how many first and asks
+    before it does anything. The file name settings themselves are still
+    set on each computer.
+  - A document counts as saved only when that very file is in the folder.
+    Each file is read once to check it; after that its size and date are
+    enough, so checking a large folder takes a moment.
+  - If the folder cannot be read, because it is still downloading, say,
+    nothing is saved and the popup says why. A slow folder never makes
+    documents be saved again.
+  - A document already in the folder with exactly the same contents is
+    never saved beside itself as a "(1)" copy.
+  - **History File** in Settings turns sharing off.
 - Settings is shorter and calmer. File naming is two menus and an example:
   each menu shows what its choices give when opened, the pattern box and
   its tools appear only for Custom, and rules for one site wait behind

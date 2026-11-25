@@ -3,6 +3,7 @@ import { DEFAULT_NAMING, checkPattern, normalise, pathFor } from "./naming.js";
 import { INBOX, forgetFolders, getFolder, setFolder, withinChosen } from "./folders.js";
 import { MAX_FILE_BYTES, exportHistory, fileNameFor, importHistory, planImport, readHistory, recordedCounts } from "./history.js";
 import { STORED_PREFIX, storedText } from "./log.js";
+import { SHARING_OFF } from "./shared-history.js";
 
 // The sites you added have their own file name patterns too.
 await loadSites();
@@ -102,6 +103,8 @@ function drawLocation() {
   $("chooseDest").textContent = destination ? "Change…" : "Choose Folder…";
   $("desthint").textContent = destination ? "" : "Or choose another folder, such as a new one inside Documents.";
   $("inboxRow").hidden = !destination;
+  $("shareRow").hidden = !destination;
+  drawRename();
   $("inboxState").textContent = inbox ? "Allowed" : "Not Allowed Yet";
   $("inboxState").dataset.kind = inbox ? "" : "needed";
   $("allowInbox").textContent = inbox ? "Choose Again…" : "Allow Access…";
@@ -142,6 +145,60 @@ $("chooseDest").addEventListener("click", async () => {
   await makeInbox();
   drawLocation();
   drawPreview();
+  await shareNow();
+});
+
+// Settings changed the folder, or turned sharing on or off: the engine
+// (background.js) forgets what it knew of the old folder and reads the one
+// chosen now, so the popup shows what is saved and due there before any run.
+// An engine that does not answer, or is mid-run, reads it at the next run.
+async function shareNow() {
+  let r;
+  try { r = await chrome.runtime.sendMessage({ type: "folderChanged" }); } catch (e) { return; }
+  if (!r || r.busy || r.state === "none") return;
+  if (r.state === "problem") { historyMessage(r.text); return; }
+  if (r.state !== "ok") return;
+  historyMessage("", r.documents ? `Your folder holds ${plural(r.documents, "document")} saved by Statement Sweep, here or on another computer. They are not saved again.` : "");
+  await drawHistory();
+}
+
+$("shareHistory").addEventListener("change", async () => {
+  await chrome.storage.local.set({ [SHARING_OFF]: !$("shareHistory").checked });
+  drawRename();
+  await shareNow();
+});
+
+// Rename Saved Files: only with a folder that is the shared record, since
+// the names of what is saved are known from its history. The engine
+// (background.js) says how many it would rename, you agree, and it does it.
+function drawRename() {
+  $("renameRow").hidden = !destination || !$("shareHistory").checked;
+}
+$("renameFiles").addEventListener("click", async () => {
+  const say = (text) => { $("renameStatus").textContent = text; };
+  if (dirty) { say("Save your changes first."); return; }
+  $("renameFiles").disabled = true;
+  say("Reading your folder…");
+  try {
+    const plan = await chrome.runtime.sendMessage({ type: "renamePreview" });
+    if (!plan || plan.busy) { say(plan ? "A sync is running. Rename once it finishes." : "Statement Sweep did not answer. Try again."); return; }
+    if (plan.state === "problem") { say(plan.text); return; }
+    if (plan.state !== "ok") { say("Your folder is not shared, so there is nothing to rename."); return; }
+    const alone = plan.alone ? ` ${plural(plan.alone, "document")} whose title is not known ${plan.alone === 1 ? "is" : "are"} left as ${plan.alone === 1 ? "it is" : "they are"}.` : "";
+    const old = plan.old ? ` ${plural(plan.old, "old copy", "old copies")} left under ${plan.old === 1 ? "its" : "their"} earlier ${plan.old === 1 ? "name is" : "names are"} removed.` : "";
+    if (!plan.count && !plan.old) { say(`Every document already matches the folder and file name settings.${alone}`); return; }
+    if (!confirm(`Rename ${plural(plan.count, "document")} in your folder to match the folder and file name settings?${alone}${old}`)) { say("Nothing was renamed."); return; }
+    say("Renaming… Keep this page open.");
+    const done = await chrome.runtime.sendMessage({ type: "renameFiles" });
+    if (!done || done.busy) { say("A sync is running. Rename once it finishes."); return; }
+    if (done.state !== "ok") { say(done.text || "Nothing was renamed."); return; }
+    say(`Renamed ${plural(done.renamed, "document")}.${done.removed ? ` Removed ${plural(done.removed, "old copy", "old copies")}.` : ""}${done.problem ? ` ${done.problem}` : ""}`);
+    await drawHistory();
+  } catch (e) {
+    say("Statement Sweep did not answer. Try again.");
+  } finally {
+    $("renameFiles").disabled = false;
+  }
 });
 
 $("allowInbox").addEventListener("click", async () => {
@@ -164,6 +221,7 @@ $("useDownloads").addEventListener("click", async () => {
   inbox = null;
   drawLocation();
   drawPreview();
+  await shareNow();
 });
 
 // The menu above a pattern shows the preset it matches, or Custom.
@@ -473,6 +531,8 @@ $("importConfirm").addEventListener("click", async () => {
 
 $("scope").replaceChildren(new Option("All Sites", ""), ...PROVIDERS.map((p) => new Option(p.name, p.id)));
 $("base").value = draft.base;
+$("shareHistory").checked = (await chrome.storage.local.get(SHARING_OFF))[SHARING_OFF] !== true;
+drawRename();
 drawLocation();
 drawFields();
 drawHistory();
