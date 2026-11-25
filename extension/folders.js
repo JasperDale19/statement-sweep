@@ -85,7 +85,8 @@ function claim(work) {
 // `reuseSame`, for documents: a file already there under the name, or one of
 // its "(1)", "(2)" names, with exactly these bytes is the same document, saved
 // before by this computer or another. It is left as it is and its path
-// answered, so saving a document twice never makes a second copy.
+// answered, so saving a document twice never makes a second copy. A save
+// begun under the name and never finished left it empty; that name is used.
 async function sameBytes(file, blob) {
   if (file.size !== blob.size) return false;
   const [a, b] = await Promise.all([file.arrayBuffer(), blob.arrayBuffer()]);
@@ -94,7 +95,14 @@ async function sameBytes(file, blob) {
   return true;
 }
 
-async function nameOrSame(dir, name, blob) {
+// Paths this copy is writing now, and when each began. An empty file at one
+// of them is a save under way, not one given up on. A write that has not
+// finished in UNDER_WAY_MS has been given up on by whoever asked for it.
+const UNDER_WAY_MS = 10 * 60 * 1000;
+const underWay = new Map();
+const isUnderWay = (key) => underWay.has(key) && Date.now() - underWay.get(key) < UNDER_WAY_MS;
+
+async function nameOrSame(dir, name, blob, keyOf) {
   const dot = name.lastIndexOf(".");
   const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
   for (let n = 0; n < 1000; n += 1) {
@@ -106,7 +114,12 @@ async function nameOrSame(dir, name, blob) {
       if (e.name === "NotFoundError") return { name: candidate, same: false };
       throw e;
     }
-    if (await sameBytes(await there.getFile(), blob)) return { name: candidate, same: true };
+    const file = await there.getFile();
+    // An empty file under the name is a save that was begun and not finished
+    // (given up on, or cut short): its name is taken over, so trying again
+    // does not put a "(1)" beside it. No document is empty.
+    if (file.size === 0 && blob.size > 0 && !isUnderWay(keyOf(candidate))) return { name: candidate, same: false };
+    if (await sameBytes(file, blob)) return { name: candidate, same: true };
   }
   throw new Error("Too many files share that name.");
 }
@@ -116,20 +129,28 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
   const fileName = parts.pop();
   let dir = root;
   for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
+  const keyOf = (leaf) => [...parts, leaf].join("/");
   const [name, handle] = await claim(async () => {
     if (reuseSame && !replace) {
-      const found = await nameOrSame(dir, fileName, blob);
-      return [found.name, found.same ? null : await dir.getFileHandle(found.name, { create: true })];
+      const found = await nameOrSame(dir, fileName, blob, keyOf);
+      if (found.same) return [found.name, null];
+      underWay.set(keyOf(found.name), Date.now());
+      return [found.name, await dir.getFileHandle(found.name, { create: true })];
     }
     const chosen = replace ? fileName : await freeName(dir, fileName);
+    if (!replace) underWay.set(keyOf(chosen), Date.now());
     return [chosen, await dir.getFileHandle(chosen, { create: true })];
   });
-  if (!handle) return [...parts, name].join("/");
-  const out = await handle.createWritable();
-  await out.write(blob);
-  await out.close();
-  if ((await handle.getFile()).size !== blob.size) throw new Error("The saved copy is incomplete.");
-  return [...parts, name].join("/");
+  if (!handle) return keyOf(name);
+  try {
+    const out = await handle.createWritable();
+    await out.write(blob);
+    await out.close();
+    if ((await handle.getFile()).size !== blob.size) throw new Error("The saved copy is incomplete.");
+  } finally {
+    underWay.delete(keyOf(name));
+  }
+  return keyOf(name);
 }
 
 export async function moveFromInbox(inbox, stageName, root, path, options = {}) {

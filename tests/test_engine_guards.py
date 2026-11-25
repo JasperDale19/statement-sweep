@@ -312,6 +312,14 @@ def test_a_shared_folder_that_cannot_be_written_stops_the_site_and_nothing_goes_
     assert not [e for e in got["events"] if e[0] == "download"]
 
 
+def test_a_download_that_cannot_reach_a_shared_folder_is_not_left_in_downloads(engine):
+    got, _, pdfs = sweep(engine, {"docs": [doc("c1", "click")], "clickBody": PDF, "blockPaths": [F2]})
+    line = got["board"]["fake"]
+    assert line["state"] == "bad" and "Your folder could not be written, so this site stops here." in line["text"]
+    assert "seen:fake" not in got["local"] and pdfs == []
+    assert ["removeFile", 77] in got["events"] and ["erase", 77] in got["events"]
+
+
 def test_a_folder_not_shared_that_cannot_be_written_still_saves_to_downloads(engine):
     got, _, _ = sweep(engine, {"docs": [doc("f1")], "blockPaths": [F2], "finishDownloads": True}, local={"historySharingOff": True})
     assert got["board"]["fake"]["state"] == "ok" and "saved in Downloads" in got["board"]["fake"]["text"]

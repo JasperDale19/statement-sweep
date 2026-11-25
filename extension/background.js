@@ -934,7 +934,13 @@ async function saveOne(tabId, provider, doc, destination, shared = false) {
         await chrome.downloads.erase({ id: landed.id }).catch(() => {});
         return { ok: false, why: "The site sent something that is not a PDF." };
       }
-      if (shared) return { ok: false, stop: true, why: `Your folder could not be written, so this site stops here. One download stayed in Downloads, in ${INBOX}.` };
+      // Not kept in Downloads either: it is saved again once the folder can
+      // be written, and a copy left behind each time would pile up.
+      if (shared) {
+        await chrome.downloads.removeFile(landed.id).catch(() => {});
+        await chrome.downloads.erase({ id: landed.id }).catch(() => {});
+        return { ok: false, stop: true, why: `Your folder could not be written, so this site stops here. ${errorText(e).split("\n")[0]}` };
+      }
       return { ok: true, bytes: landed.bytes, note: `Some documents stayed in Downloads, in ${INBOX}, because they could not be moved to your chosen folder.` };
     }
     await chrome.downloads.removeFile(landed.id).catch(() => {});

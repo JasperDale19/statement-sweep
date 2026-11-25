@@ -436,6 +436,30 @@ def test_the_same_bytes_as_a_numbered_copy_are_left_as_they_are(tab):
     assert path == numbered and len(names) == 2
 
 
+def test_a_save_begun_and_never_finished_has_its_name_taken_over(tab):
+    # An empty file is all an unfinished save leaves behind.
+    path, names = run(tab, saving({PATH_A: ""}, PDF_A))["result"]
+    assert path == PATH_A and names == ["2026-10-28 American Express Statement.pdf"]
+    back = run(tab, with_pdfs({PATH_A: ""}, f"""async (s, root) => {{
+      await ({SAVE})(s, root, {json.dumps(PATH_A)}, {json.dumps(PDF_A)});
+      return s.verified(root, {json.dumps(facts(PATH_A, PDF_A))}).then(Boolean);
+    }}"""))["result"]
+    assert back is True
+
+
+def test_two_different_documents_saved_at_once_under_one_name_both_survive(tab):
+    # The first is still being written, and empty, when the second chooses its name.
+    call = f"""async (s, root) => {{
+      const f = await import('/folders.js');
+      const path = {json.dumps(PATH_A)};
+      const names = await Promise.all([f.writeFile(root, path, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }}),
+                                       f.writeFile(root, path, new Blob([{json.dumps(PDF_C)}]), {{ reuseSame: true }})]);
+      return [names, await ({LISTING})(root)];
+    }}"""
+    names, listing = run(tab, call)["result"]
+    assert set(names) == {PATH_A, PATH_A.replace(".pdf", " (1).pdf")} and len(listing) == 2
+
+
 def test_without_asking_for_it_the_same_bytes_are_still_saved_beside(tab):
     call = with_pdfs({PATH_A: PDF_A}, f"async (s, root) => (await import('/folders.js')).writeFile(root, {json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}]))")
     assert run(tab, call)["result"] == PATH_A.replace(".pdf", " (1).pdf")
