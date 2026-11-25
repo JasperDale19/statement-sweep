@@ -184,20 +184,43 @@ async function say(id, state, text, offers) {
 // Each call has PAGE_WAIT_MS (see within). A read of the list, or a move to
 // the next view, saves nothing, so Stop cuts it short; a press for a
 // document is let answer.
+// A read of a page that starts loading again before it answers never answers:
+// Chrome drops the script with the page it ran in (TreasuryDirect reloads its
+// account page just after sign-in). So a list read is given up the moment its
+// tab starts loading, rather than after PAGE_WAIT_MS, and the wait loop reads
+// the new page. Answers {promise, stop}.
+const RELOADED = "The page started loading again before it answered.";
+function whileOnPage(tabId) {
+  let changed;
+  const promise = new Promise((_, reject) => {
+    changed = (id, info) => { if (id === tabId && info.status === "loading") reject(new Error(RELOADED)); };
+    chrome.tabs.onUpdated.addListener(changed);
+  });
+  promise.catch(() => {});
+  return { promise, stop: () => chrome.tabs.onUpdated.removeListener(changed) };
+}
+
 async function inPage(tabId, provider, func, args = []) {
   let result;
   const stoppable = func === readList || func === nextView;
+  const page = func === readList ? whileOnPage(tabId) : null;
   try {
-    await within(PAGE_WAIT_MS, `The page did not answer within ${minutes(PAGE_WAIT_MS)}.`, async () => {
-      await chrome.scripting.executeScript({ target: { tabId }, files: ["providers/shared.js", provider.pageFile] });
-      // An added site's recipe reads its saved pattern from here (added.page.js).
-      if (provider.added) await chrome.scripting.executeScript({ target: { tabId }, func: (config) => { globalThis.__sweepAddedConfig = config; }, args: [provider.added] });
-      [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+    await within(PAGE_WAIT_MS, `The page did not answer within ${minutes(PAGE_WAIT_MS)}.`, () => {
+      const read = (async () => {
+        await chrome.scripting.executeScript({ target: { tabId }, files: ["providers/shared.js", provider.pageFile] });
+        // An added site's recipe reads its saved pattern from here (added.page.js).
+        if (provider.added) await chrome.scripting.executeScript({ target: { tabId }, func: (config) => { globalThis.__sweepAddedConfig = config; }, args: [provider.added] });
+        [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+      })();
+      return page ? Promise.race([read, page.promise]) : read;
     }, stoppable);
   } catch (e) {
     if (stoppable && stopAsked) note(provider, `inPage ${func.name || "script"} in tab ${tabId} cut short: Stop was pressed.`);
+    else if (e && e.message === RELOADED) note(provider, `inPage ${func.name || "script"} in tab ${tabId}: ${RELOADED} Reading the new page.`);
     else logs.error(provider, `inPage ${func.name || "script"} in tab ${tabId}`, e);
     throw e;
+  } finally {
+    if (page) page.stop();
   }
   if (result && Array.isArray(result.log)) for (const text of result.log) note(provider, `page: ${text}`);
   return result;

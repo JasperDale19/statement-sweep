@@ -20,7 +20,16 @@ PDF = "%PDF-1.4 invented\n%%EOF"
 RECIPE = """(() => {
   const plan = window.__plan;
   const never = () => new Promise(() => {});
-  const readList = () => (plan.hangList ? never() : { state: 'ok', docs: plan.docs, more: Boolean(plan.more) });
+  const readList = () => {
+    // A page that starts loading again while it is read, as TreasuryDirect's
+    // account page does just after sign-in: the read never answers.
+    if (plan.reloadOnce && !plan.reloaded) {
+      plan.reloaded = true;
+      setTimeout(() => { for (const id of __tabs.keys()) __on.updated.set.forEach((g) => g(id, { status: 'loading' })); }, 50);
+      return never();
+    }
+    return plan.hangList ? never() : { state: 'ok', docs: plan.docs, more: Boolean(plan.more) };
+  };
   const fetchPdf = (doc) => (plan.hangFetch ? never() : { ok: true, base64: btoa((plan.bodies || {})[doc.id] || '%PDF-1.4 invented\\n%%EOF') });
   const nextView = () => (plan.hangNext ? never() : { moved: false });
   const clickDoc = (doc) => { setTimeout(() => window.__download(doc), 10); return { ok: true }; };
@@ -218,3 +227,14 @@ def test_add_site_leaves_a_built_in_sites_host_alone(bare):
     got = bare.evaluate(ADD, {"config": PICKED, "sender": FROM_TAB})
     assert got["answer"] == {"ok": False, "why": "Acme Built In is already built in to Statement Sweep, so it isn't added again."}
     assert "addedSites" not in got["local"]
+
+
+# -- a page that reloads while it is read ------------------------------------------
+
+def test_a_list_read_of_a_page_that_starts_loading_again_is_read_afresh_at_once(engine):
+    got, site, pdfs = sweep(engine, {"reloadOnce": True, "docs": [doc("r1")]})
+    assert got["board"]["fake"]["text"] == "1 new.", got["board"]
+    assert "The page started loading again before it answered. Reading the new page." in site
+    assert "ERROR" not in site
+    # Long before the page call's own two minutes.
+    assert got["ms"] < 10000
