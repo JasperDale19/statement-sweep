@@ -475,7 +475,7 @@ def test_two_different_documents_saved_at_once_under_one_name_both_survive(tab):
 
 
 def test_two_documents_of_one_size_saved_at_once_under_one_name_never_write_over_each_other(tab):
-    # They cannot be told apart until the first is written, so the second waits for another time.
+    # The second waits for another time, or, if the first has been written by then, is saved beside it.
     call = f"""async (s, root) => {{
       const f = await import('/folders.js');
       const path = {json.dumps(PATH_A)};
@@ -485,7 +485,9 @@ def test_two_documents_of_one_size_saved_at_once_under_one_name_never_write_over
       return [names, kept, await ({LISTING})(root)];
     }}"""
     names, kept, listing = run(tab, call)["result"]
-    assert names == [PATH_A, "StillSaving"] and kept == PDF_A and len(listing) == 1
+    beside = PATH_A.replace(".pdf", " (1).pdf")
+    assert names[0] == PATH_A and kept == PDF_A
+    assert (names[1], len(listing)) in (("StillSaving", 1), (beside, 2))
 
 
 def test_a_document_tried_again_while_its_first_save_has_not_ended_is_not_saved_beside_it(tab):
