@@ -850,6 +850,17 @@ function startsPdf(base64) {
   try { return typeof base64 === "string" && atob(base64.slice(0, 8)).startsWith("%PDF-"); } catch (e) { return false; }
 }
 
+// Takes a download staged in the inbox out of Downloads. Chrome forgets it
+// only once it is really gone, so one that could not be removed can still be
+// found in Chrome's downloads.
+async function clearStaged(provider, id) {
+  const removed = await chrome.downloads.removeFile(id).then(() => true, (e) => {
+    note(provider, `A download left in ${INBOX} could not be removed: ${errorText(e).split("\n")[0]}`, "WARN");
+    return false;
+  });
+  if (removed) await chrome.downloads.erase({ id }).catch(() => {});
+}
+
 // `destination` is the folder this site's sweep uses (sweep), or none.
 // `shared`: the folder is shared with other computers, so a document that
 // cannot be written to it stops the site, rather than going to Downloads
@@ -932,28 +943,20 @@ async function saveOne(tabId, provider, doc, destination, shared = false) {
       // Not a PDF by its bytes: not saved, so it is fetched again next time,
       // and the staged file is taken out of Downloads.
       if (/not a PDF/i.test(String((e && e.message) || e))) {
-        await chrome.downloads.removeFile(landed.id).catch(() => {});
-        await chrome.downloads.erase({ id: landed.id }).catch(() => {});
+        await clearStaged(provider, landed.id);
         return { ok: false, why: "The site sent something that is not a PDF." };
       }
       // Not kept in Downloads either: it is saved again once the folder can
       // be written, and a copy left behind each time would pile up. The same
       // for one whose earlier save has not ended (StillSaving), in any folder.
       if (shared || e instanceof StillSaving) {
-        // Forgotten by Chrome only once it is really gone, so one that could
-        // not be removed can still be found in Chrome's downloads.
-        const removed = await chrome.downloads.removeFile(landed.id).then(() => true, (x) => {
-          note(provider, `A download left in ${INBOX} could not be removed: ${errorText(x).split("\n")[0]}`, "WARN");
-          return false;
-        });
-        if (removed) await chrome.downloads.erase({ id: landed.id }).catch(() => {});
+        await clearStaged(provider, landed.id);
         if (e instanceof StillSaving) return { ok: false, why: e.message };
         return { ok: false, stop: true, why: `Your folder could not be written, so this site stops here. ${errorText(e).split("\n")[0]}` };
       }
       return { ok: true, bytes: landed.bytes, note: `Some documents stayed in Downloads, in ${INBOX}, because they could not be moved to your chosen folder.` };
     }
-    await chrome.downloads.removeFile(landed.id).catch(() => {});
-    await chrome.downloads.erase({ id: landed.id }).catch(() => {});
+    await clearStaged(provider, landed.id);
     return { ...landed, inFolder: moved, payload };
   }
   return { ok: false, why: "This document has no way to be saved yet." };
