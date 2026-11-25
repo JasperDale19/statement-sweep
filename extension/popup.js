@@ -395,6 +395,7 @@ export function folderLine(sync) {
   if (!sync || !sync.state || sync.state === "none") return "";
   if (sync.state === "checking") return sync.total ? `Checking your folder… ${amountOf(sync.done)} of ${amountOf(sync.total)}` : "Checking your folder…";
   if (sync.state === "problem") return sync.text || "Your folder could not be read.";
+  if (sync.state === "renaming") return `Renaming your files… ${amountOf(sync.done)} of ${amountOf(sync.total)}`;
   const docs = `${amountOf(sync.documents)} ${sync.documents === 1 ? "document" : "documents"}`;
   return `In sync with “${sync.name || "your folder"}”: ${docs} saved, on this computer or another.`;
 }

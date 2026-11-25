@@ -12,7 +12,7 @@ import { backfillFor, documentDate, folderKey, isDue, isTaxDocument, keysFor, lo
 import { amount, cleanUrl, errorText, makeLogs } from "./log.js";
 import { OFFERS_WAIT, hasOffers, makeOffers, offersWanted, offersWords } from "./offers.js";
 import { addFound, estimateNew, foundKey, foundOf, siteProgress } from "./progress.js";
-import { FolderUnavailable, Stopped, factsOf, reconcile, sharingOn, stillThere, verified, writeChecked, writeEntry } from "./shared-history.js";
+import { FolderUnavailable, Stopped, factsOf, reconcile, renamePlan, renameSite, sharingOn, stillThere, verified, writeChecked, writeEntry } from "./shared-history.js";
 
 // The run's logs (log.js): what each site did and why it stopped, written to
 // each site's Logs folder as the run goes. `note` adds one line for a site.
@@ -87,6 +87,8 @@ const ENTRY_WAIT_MS = 60 * 1000;
 let folderGen = 0;
 let folderNow = null;
 let reconciling = null;
+// Files of the folder are being renamed (Settings): no run starts meanwhile.
+let renaming = false;
 // What is kept of the folder is changed one step at a time.
 let folderSteps = Promise.resolve();
 function folderStep(work) {
@@ -1308,7 +1310,8 @@ async function sweep(provider, together = false, entry = { destination: null, sa
           return null;
         });
         if (facts) {
-          const claim = { id: doc.id, facts };
+          // Its title too: what renaming the file to another pattern goes by.
+          const claim = { id: doc.id, facts: { ...facts, title: typeof doc.title === "string" ? doc.title : "" } };
           await journal(provider.id, claim);
           entry.saved.push(claim);
         }
@@ -1591,7 +1594,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 // A run, from the popup's Get New Documents or a site's Run. Heard only from
 // this extension's own pages, as Stop is.
 chrome.runtime.onMessage.addListener((message, sender) => {
-  if (!message || message.type !== "sweep" || running) return;
+  if (!message || message.type !== "sweep" || running || renaming) return;
   if (!fromOwnPage(sender)) return;
   running = true;
   runAt = Date.now();
@@ -1683,7 +1686,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await folderStep(forgetFolderRecord);
       await sayFolder({ state: "none" });
     }
-    if (running) return { busy: true };
+    if (running || renaming) return { busy: true };
     if (message.type === "syncHistory" && folderNow && folderNow.gen === folderGen && Date.now() - folderNow.at < FOLDER_FRESH_MS) {
       return (await chrome.storage.session.get(FOLDER_SYNC))[FOLDER_SYNC] || { state: "none" };
     }
@@ -1691,6 +1694,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     await checkDue();
     return state;
   })().then(answer, () => answer({ state: "none" }));
+  return true;
+});
+
+// Settings' Rename Saved Files: the documents already in the shared folder
+// are renamed to the folder and file name settings of now. `renamePreview`
+// answers how many would be ({ state: "ok", count, alone }) and changes
+// nothing; `renameFiles` does it and answers { state: "ok", renamed, skipped,
+// alone, problem }. The folder is read first, and again after. Not during a
+// run, and no run starts meanwhile. Heard only from this extension's own pages.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || (message.type !== "renamePreview" && message.type !== "renameFiles") || !fromOwnPage(sender)) return;
+  const answer = (o) => { try { sendResponse(o); } catch (e) { /* the page closed */ } };
+  (async () => {
+    if (running || renaming) return { busy: true };
+    renaming = true;
+    const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20000);
+    try {
+      await loadSites();
+      const state = await reconcileFolder("before renaming");
+      const folder = folderNow;
+      if (state.state !== "ok" || !folder) return state.state === "problem" ? state : { state: "none" };
+      const { naming } = await chrome.storage.local.get("naming");
+      const plan = renamePlan(folder.record, PROVIDERS.filter((p) => !p.added), naming);
+      if (message.type === "renamePreview") return { state: "ok", count: plan.moves.length, alone: plan.alone };
+      const total = plan.moves.length;
+      let done = 0, told = 0, renamed = 0, skipped = 0, problem = "";
+      const progress = () => {
+        done += 1;
+        if (Date.now() - told < 400 && done < total) return;
+        told = Date.now();
+        sayFolder({ state: "renaming", done, total, name: folder.handle.name });
+      };
+      logs.runLine(`Renaming asked for in Settings: ${total} document(s) to rename, ${plan.alone} left as they are (title not known).`);
+      for (const site of [...new Set(plan.moves.map((m) => m.site))]) {
+        try {
+          const r = await renameSite(folder.handle, folder, site, plan.moves.filter((m) => m.site === site), { progress });
+          renamed += r.renamed;
+          skipped += r.skipped;
+          logs.runLine(`${site}: ${r.renamed} document(s) renamed${r.skipped ? `, ${r.skipped} changed since the folder was read and left` : ""}${r.entry ? `, listed in ${r.entry}` : ""}.`);
+        } catch (e) {
+          problem = e instanceof FolderUnavailable ? e.message : `Renaming stopped: ${errorText(e).split("\n")[0]}`;
+          logs.runLine(`${site}: ${problem}`, "WARN");
+          break;
+        }
+      }
+      // What is kept of the folder is of its old names: read again.
+      await reconcileFolder("after renaming");
+      await checkDue();
+      return { state: "ok", renamed, skipped, alone: plan.alone, problem };
+    } finally {
+      renaming = false;
+      clearInterval(keepAlive);
+    }
+  })().then(answer, (e) => answer({ state: "problem", text: `Renaming did not finish: ${errorText(e).split("\n")[0]}` }));
   return true;
 });
 

@@ -478,6 +478,7 @@ def test_with_no_shared_folder_there_is_no_folder_line(tab):
     ({"state": "ok", "documents": 1366, "entries": 28, "at": 5, "name": "Statement Sweep"}, "In sync with “Statement Sweep”: 1,366 documents saved, on this computer or another.", ""),
     ({"state": "ok", "documents": 1, "entries": 1, "at": 5, "name": "Docs"}, "In sync with “Docs”: 1 document saved, on this computer or another.", ""),
     ({"state": "problem", "text": "Your folder could not be read. Nothing was saved."}, "Your folder could not be read. Nothing was saved.", "problem"),
+    ({"state": "renaming", "done": 40, "total": 1243}, "Renaming your files… 40 of 1,243", ""),
 ])
 def test_the_folder_line_says_how_the_shared_folder_stands(tab, sync, says, kind):
     show(tab, folder=sync)

@@ -106,6 +106,12 @@ folder and how many documents it holds.
   rather than missed.
 - If the folder cannot be read, because it is still downloading, say,
   nothing is saved and the popup says why. Run it again in a moment.
+- A statement already in the folder under another file name is recognised
+  by its contents and not saved again.
+- The folder and file name settings are set on each computer; set them the
+  same. After changing them, Rename to Match in Settings renames what is
+  already saved, for every computer. It says how many files first, and
+  leaves alone any whose title it cannot know.
 - Every computer needs the same version of Statement Sweep or newer.
 - Documents a computer saved before the folder was chosen are not listed
   until they are in the folder and saved again; one with the same contents

@@ -17,6 +17,14 @@ What changed for people using Statement Sweep, newest first. The version is
     where each was saved and a fingerprint of it, to the folder's
     `Statement Sweep History` folder. A site looked at with nothing new is
     noted there too, so another computer does not ask for it again that day.
+  - A statement already in the folder under a different file name, because
+    another computer or an older file name pattern named it, is recognised
+    by its contents and not saved a second time.
+  - Settings has Rename to Match, beside the folder: it renames the
+    documents already saved to the folder and file name settings of now,
+    for every computer sharing the folder. It says how many first and asks
+    before it does anything. The file name settings themselves are still
+    set on each computer.
   - A document counts as saved only when that very file is in the folder.
     Each file is read once to check it; after that its size and date are
     enough, so checking a large folder takes a moment.

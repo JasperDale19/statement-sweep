@@ -587,6 +587,41 @@ def test_sharing_is_on_with_a_folder_and_can_be_turned_off(stab):
     stab.wait_for_function("__store.historySharingOff === false")
 
 
+def renaming(stab, answer, yes=True):
+    settings(stab, {}, {"state": "ok", "documents": 3, "name": "Shared"})
+    assert stab.locator("#renameRow").is_hidden()
+    choose(stab, "Shared")
+    stab.wait_for_function("__sent.length === 1")
+    assert stab.locator("#renameRow").is_visible()
+    stab.evaluate("([answer, yes]) => { window.__answer = answer; window.__asked = []; window.confirm = (t) => { __asked.push(t); return yes; }; }", [answer, yes])
+    stab.click("#renameFiles")
+    stab.wait_for_function("document.getElementById('renameStatus').textContent !== '' && !document.getElementById('renameFiles').disabled")
+    return stab.evaluate("__sent.slice(1)"), stab.evaluate("__asked"), stab.inner_text("#renameStatus")
+
+
+def test_renaming_says_what_it_will_do_and_asks_before_it_does(stab):
+    sent, asked, status = renaming(stab, {"state": "ok", "count": 2, "alone": 1, "renamed": 2, "skipped": 0, "problem": ""})
+    assert sent == [{"type": "renamePreview"}, {"type": "renameFiles"}]
+    assert asked == ["Rename 2 documents in your folder to match the folder and file name settings? 1 document whose title is not known is left as it is."]
+    assert status == "Renamed 2 documents."
+
+
+def test_renaming_not_agreed_to_changes_nothing(stab):
+    sent, asked, status = renaming(stab, {"state": "ok", "count": 2, "alone": 0}, yes=False)
+    assert sent == [{"type": "renamePreview"}] and len(asked) == 1 and status == "Nothing was renamed."
+
+
+def test_with_every_name_right_there_is_nothing_to_ask(stab):
+    sent, asked, status = renaming(stab, {"state": "ok", "count": 0, "alone": 0})
+    assert sent == [{"type": "renamePreview"}] and asked == []
+    assert status == "Every document already matches the folder and file name settings."
+
+
+def test_renaming_during_a_sync_waits_for_it(stab):
+    sent, asked, status = renaming(stab, {"busy": True})
+    assert sent == [{"type": "renamePreview"}] and asked == [] and status == "A sync is running. Rename once it finishes."
+
+
 def test_an_engine_that_does_not_answer_leaves_the_page_quiet(stab):
     settings(stab, {}, None)
     stab.evaluate("() => { chrome.runtime.sendMessage = async () => { throw new Error('Could not establish connection.'); }; }")

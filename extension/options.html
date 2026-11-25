@@ -135,6 +135,14 @@
       </div>
       <p class="hint">Makes this folder the one record of what is saved, for Statement Sweep on every computer that chooses it: none saves a document another already has. Its Statement Sweep History folder lists each document's date and id, which for some sites includes an account number.</p>
     </div>
+    <div class="row" id="renameRow" hidden>
+      <span>Saved Files</span>
+      <div class="choice">
+        <span id="renameStatus" role="status"></span>
+        <button class="secondary" id="renameFiles" type="button">Rename to Match…</button>
+      </div>
+      <p class="hint">Renames the documents already in this folder to the folder and file name settings saved below, for every computer that shares it. It says how many first. Nothing is renamed by itself when you change the settings.</p>
+    </div>
     <div class="row">
       <label for="base">Main Folder</label>
       <input id="base" spellcheck="false" autocomplete="off">
