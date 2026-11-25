@@ -182,25 +182,38 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
   for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
   const keyOf = (leaf) => [...parts, leaf].join("/");
   const gone = () => new Error("The chosen folder did not answer within 30 seconds.");
-  const take = (leaf) => { underWay.set(keyOf(leaf), blob.size); underWayBytes.set(keyOf(leaf), blob); };
+  // The name is taken, and its file made: let go again if it cannot be made.
+  const make = async (leaf) => {
+    underWay.set(keyOf(leaf), blob.size);
+    underWayBytes.set(keyOf(leaf), blob);
+    try {
+      return await dir.getFileHandle(leaf, { create: true });
+    } catch (e) {
+      underWay.delete(keyOf(leaf));
+      underWayBytes.delete(keyOf(leaf));
+      throw e;
+    }
+  };
   const claimed = () => claim(async (live) => {
     if (reuseSame && !replace) {
       const found = await nameOrSame(dir, fileName, blob, keyOf);
       if (found.same) return [found.name, null];
       if (!live()) throw gone();
-      take(found.name);
-      return [found.name, await dir.getFileHandle(found.name, { create: true })];
+      return [found.name, await make(found.name)];
     }
     const chosen = replace ? fileName : await freeName(dir, fileName);
     if (!live()) throw gone();
-    if (!replace) take(chosen);
-    return [chosen, await dir.getFileHandle(chosen, { create: true })];
+    return [chosen, replace ? await dir.getFileHandle(chosen, { create: true }) : await make(chosen)];
   });
   // The same bytes under another name of the folder: looked for before the
   // name is claimed, so a large folder does not use up the time a claim is
   // given, and given the same time of its own. `anyName: false`, for a file
   // being renamed: its old name is beside it.
+  const stillSaving = () => new StillSaving("This document is still being saved from an earlier try. It is tried again next time.");
   const [name, handle] = !(reuseSame && !replace && anyName) ? await claimed() : await looking(async () => {
+    // Asked before the folder is looked through as well as after: a save
+    // that ends while it is looked through is in neither otherwise.
+    if (await sameUnderWay(parts, blob)) throw stillSaving();
     let timer;
     const elsewhere = await Promise.race([
       sameElsewhere(dir, fileName, blob),
@@ -209,7 +222,7 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
     if (elsewhere) return [elsewhere, null];
     // Being saved in this folder right now, under this name or another: not
     // saved beside it.
-    if (await sameUnderWay(parts, blob)) throw new StillSaving("This document is still being saved from an earlier try. It is tried again next time.");
+    if (await sameUnderWay(parts, blob)) throw stillSaving();
     return claimed();
   });
   if (!handle) return keyOf(name);

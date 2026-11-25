@@ -522,6 +522,22 @@ def test_the_same_bytes_begun_together_under_two_names_are_saved_once(tab):
     assert listing == ["one.pdf"] and got[0].endswith("one.pdf") and got[1] in ("StillSaving", got[0])
 
 
+def test_a_file_that_could_not_be_made_does_not_hold_its_document_back(tab):
+    # The folder refuses to make the file once; the next try saves it.
+    call = f"""async (s, root) => {{
+      const f = await import('/folders.js');
+      let refuse = true;
+      const wrap = (dir) => ({{
+        getDirectoryHandle: async (n, o) => wrap(await dir.getDirectoryHandle(n, o)), entries: () => dir.entries(),
+        getFileHandle: async (n, o) => {{ if (o && o.create && refuse) {{ refuse = false; throw new DOMException('no', 'NoModificationAllowedError'); }} return dir.getFileHandle(n, o); }},
+      }});
+      const first = await f.writeFile(wrap(root), {json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }}).then((v) => v, (e) => e.name);
+      const second = await f.writeFile(root, {json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }}).then((v) => v, (e) => e.constructor.name);
+      return [first, second];
+    }}"""
+    assert run(tab, call)["result"] == ["NoModificationAllowedError", PATH_A]
+
+
 def test_without_asking_for_it_the_same_bytes_are_still_saved_beside(tab):
     call = with_pdfs({PATH_A: PDF_A}, f"async (s, root) => (await import('/folders.js')).writeFile(root, {json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}]))")
     assert run(tab, call)["result"] == PATH_A.replace(".pdf", " (1).pdf")
