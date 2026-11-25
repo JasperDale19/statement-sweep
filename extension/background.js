@@ -7,7 +7,7 @@
 import { SITES as PROVIDERS, ADDED, builtInFor, cleanConfig, lastKey, loadSites, primedKey, withSite } from "./sites.js";
 import { pathFor } from "./naming.js";
 import { makeCapture } from "./capture.js";
-import { INBOX, getFolder, isGranted, moveFromInbox, setFolder, withinChosen, writeFile } from "./folders.js";
+import { INBOX, StillSaving, getFolder, isGranted, moveFromInbox, setFolder, withinChosen, writeFile } from "./folders.js";
 import { backfillFor, documentDate, folderKey, isDue, isTaxDocument, keysFor, localIso, standingOf } from "./cadence.js";
 import { amount, cleanUrl, errorText, makeLogs } from "./log.js";
 import { OFFERS_WAIT, hasOffers, makeOffers, offersWanted, offersWords } from "./offers.js";
@@ -892,6 +892,8 @@ async function saveOne(tabId, provider, doc, destination, shared = false) {
         return { ok: true, bytes: size, inFolder: path, payload };
       } catch (e) {
         logs.error(provider, "writing to the chosen folder", e);
+        // Its earlier save has not ended: left for the next run, not saved beside it.
+        if (e instanceof StillSaving) return { ok: false, why: e.message };
         if (shared) return { ok: false, stop: true, why: `Your folder could not be written, so this site stops here. ${errorText(e).split("\n")[0]}` };
         return { ok: await saveBase64(pdf.base64, filename), bytes: size, note: "Some documents were saved in Downloads because your chosen folder could not be written." };
       }
@@ -935,10 +937,17 @@ async function saveOne(tabId, provider, doc, destination, shared = false) {
         return { ok: false, why: "The site sent something that is not a PDF." };
       }
       // Not kept in Downloads either: it is saved again once the folder can
-      // be written, and a copy left behind each time would pile up.
-      if (shared) {
-        await chrome.downloads.removeFile(landed.id).catch(() => {});
-        await chrome.downloads.erase({ id: landed.id }).catch(() => {});
+      // be written, and a copy left behind each time would pile up. The same
+      // for one whose earlier save has not ended (StillSaving), in any folder.
+      if (shared || e instanceof StillSaving) {
+        // Forgotten by Chrome only once it is really gone, so one that could
+        // not be removed can still be found in Chrome's downloads.
+        const removed = await chrome.downloads.removeFile(landed.id).then(() => true, (x) => {
+          note(provider, `A download left in ${INBOX} could not be removed: ${errorText(x).split("\n")[0]}`, "WARN");
+          return false;
+        });
+        if (removed) await chrome.downloads.erase({ id: landed.id }).catch(() => {});
+        if (e instanceof StillSaving) return { ok: false, why: e.message };
         return { ok: false, stop: true, why: `Your folder could not be written, so this site stops here. ${errorText(e).split("\n")[0]}` };
       }
       return { ok: true, bytes: landed.bytes, note: `Some documents stayed in Downloads, in ${INBOX}, because they could not be moved to your chosen folder.` };

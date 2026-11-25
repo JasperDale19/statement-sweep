@@ -95,12 +95,15 @@ async function sameBytes(file, blob) {
   return true;
 }
 
-// Paths this copy is writing now, and when each began. An empty file at one
-// of them is a save under way, not one given up on. A write that has not
-// finished in UNDER_WAY_MS has been given up on by whoever asked for it.
-const UNDER_WAY_MS = 10 * 60 * 1000;
+// Paths this copy is writing now, and how many bytes each is to hold. An
+// empty file at one of them is a save under way, not one given up on. A save
+// of as many bytes under the same name is taken to be the same document
+// tried again while its first save has not ended: it is refused, to be tried
+// another time, rather than saved beside it. A write that never ends is
+// forgotten when the browser next starts the extension, and its empty file
+// is then taken over.
 const underWay = new Map();
-const isUnderWay = (key) => underWay.has(key) && Date.now() - underWay.get(key) < UNDER_WAY_MS;
+export class StillSaving extends Error {}
 
 async function nameOrSame(dir, name, blob, keyOf) {
   const dot = name.lastIndexOf(".");
@@ -118,7 +121,11 @@ async function nameOrSame(dir, name, blob, keyOf) {
     // An empty file under the name is a save that was begun and not finished
     // (given up on, or cut short): its name is taken over, so trying again
     // does not put a "(1)" beside it. No document is empty.
-    if (file.size === 0 && blob.size > 0 && !isUnderWay(keyOf(candidate))) return { name: candidate, same: false };
+    if (file.size === 0 && blob.size > 0) {
+      if (!underWay.has(keyOf(candidate))) return { name: candidate, same: false };
+      if (underWay.get(keyOf(candidate)) === blob.size) throw new StillSaving("This document is still being saved from an earlier try. It is tried again next time.");
+      continue;
+    }
     if (await sameBytes(file, blob)) return { name: candidate, same: true };
   }
   throw new Error("Too many files share that name.");
@@ -134,11 +141,11 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
     if (reuseSame && !replace) {
       const found = await nameOrSame(dir, fileName, blob, keyOf);
       if (found.same) return [found.name, null];
-      underWay.set(keyOf(found.name), Date.now());
+      underWay.set(keyOf(found.name), blob.size);
       return [found.name, await dir.getFileHandle(found.name, { create: true })];
     }
     const chosen = replace ? fileName : await freeName(dir, fileName);
-    if (!replace) underWay.set(keyOf(chosen), Date.now());
+    if (!replace) underWay.set(keyOf(chosen), blob.size);
     return [chosen, await dir.getFileHandle(chosen, { create: true })];
   });
   if (!handle) return keyOf(name);

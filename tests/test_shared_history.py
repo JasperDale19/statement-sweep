@@ -453,11 +453,47 @@ def test_two_different_documents_saved_at_once_under_one_name_both_survive(tab):
       const f = await import('/folders.js');
       const path = {json.dumps(PATH_A)};
       const names = await Promise.all([f.writeFile(root, path, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }}),
-                                       f.writeFile(root, path, new Blob([{json.dumps(PDF_C)}]), {{ reuseSame: true }})]);
+                                       f.writeFile(root, path, new Blob([{json.dumps(PDF_B)}]), {{ reuseSame: true }})]);
       return [names, await ({LISTING})(root)];
     }}"""
     names, listing = run(tab, call)["result"]
     assert set(names) == {PATH_A, PATH_A.replace(".pdf", " (1).pdf")} and len(listing) == 2
+
+
+def test_two_documents_of_one_size_saved_at_once_under_one_name_never_write_over_each_other(tab):
+    # They cannot be told apart until the first is written, so the second waits for another time.
+    call = f"""async (s, root) => {{
+      const f = await import('/folders.js');
+      const path = {json.dumps(PATH_A)};
+      const save = (text) => f.writeFile(root, path, new Blob([text]), {{ reuseSame: true }}).then((v) => v, (e) => e.constructor.name);
+      const names = await Promise.all([save({json.dumps(PDF_A)}), save({json.dumps(PDF_C)})]);
+      const kept = await (await (await (await (await root.getDirectoryHandle('Statement Sweep')).getDirectoryHandle('American Express')).getFileHandle('2026-10-28 American Express Statement.pdf')).getFile()).text();
+      return [names, kept, await ({LISTING})(root)];
+    }}"""
+    names, kept, listing = run(tab, call)["result"]
+    assert names == [PATH_A, "StillSaving"] and kept == PDF_A and len(listing) == 1
+
+
+def test_a_document_tried_again_while_its_first_save_has_not_ended_is_not_saved_beside_it(tab):
+    # The first save hangs at the folder; the same bytes come again.
+    call = f"""async (s, root) => {{
+      const f = await import('/folders.js');
+      const path = {json.dumps(PATH_A)};
+      const never = new Promise(() => {{}});
+      const hang = (dir) => ({{
+        getDirectoryHandle: async (n, o) => hang(await dir.getDirectoryHandle(n, o)),
+        getFileHandle: async (n, o) => {{ const h = await dir.getFileHandle(n, o); return {{ getFile: () => h.getFile(), createWritable: () => (o && o.create ? never : h.createWritable()) }}; }},
+      }});
+      f.writeFile(hang(root), path, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }});
+      await new Promise((r) => setTimeout(r, 50));
+      const again = await f.writeFile(root, path, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }}).then((v) => v, (e) => e.constructor.name + ': ' + e.message);
+      const other = await f.writeFile(root, path, new Blob([{json.dumps(PDF_B)}]), {{ reuseSame: true }});
+      return [again, other, await ({LISTING})(root)];
+    }}"""
+    again, other, listing = run(tab, call)["result"]
+    assert again == "StillSaving: This document is still being saved from an earlier try. It is tried again next time."
+    # A different document of that name is still saved, beside it.
+    assert other == PATH_A.replace(".pdf", " (1).pdf") and len(listing) == 2
 
 
 def test_without_asking_for_it_the_same_bytes_are_still_saved_beside(tab):
