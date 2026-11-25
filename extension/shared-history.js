@@ -375,8 +375,10 @@ const writing = (what, ms, work) => {
 // written so far is still listed and its old files removed, and
 // FolderUnavailable is thrown. `old`, [{id, path}] of the plan: copies left
 // where documents were before, removed if they hold the document's bytes
-// and its own file is there. Answers { renamed, skipped, removed, entry }.
-export async function renameSite(root, folder, siteId, moves, { now = new Date(), stopped = () => false, progress = () => {}, stallMs = STALL_MS, old = [] } = {}) {
+// and its own file is there. `taken`, one Set for all the sites of one
+// asking: the places files were renamed to, none of which is removed.
+// Answers { renamed, skipped, removed, entry }.
+export async function renameSite(root, folder, siteId, moves, { now = new Date(), stopped = () => false, progress = () => {}, stallMs = STALL_MS, old = [], taken = new Set() } = {}) {
   const site = (folder.record || {})[siteId];
   const fileAt = filesOf(root, stallMs);
   const landed = [];
@@ -404,20 +406,25 @@ export async function renameSite(root, folder, siteId, moves, { now = new Date()
   const held = new Set([
     ...Object.entries(folder.record).flatMap(([other, r]) => Object.entries(r.paths).filter(([id]) => other !== siteId || !moved.has(id)).map(([, path]) => path)),
     ...landed.map((l) => l.facts.path),
+    // And by every site renamed before this one in the same asking (`taken`).
+    ...taken,
   ]);
+  for (const l of landed) taken.add(l.facts.path);
   // Removes the file at `path` if it is still as it was (`size`, and `seen`
   // its time of last change when given, or else its SHA-256 `sum`), and the
   // document's own file, `kept`, read now, still holds its bytes.
   const remove = async (path, { size, seen, sum }, kept) => {
     if (held.has(path)) return false;
-    const there = await fileAt(path);
-    if (!there || there.size !== size) return false;
-    if (seen !== undefined ? there.lastModified !== seen : (await reading(path, stallMs, () => sha256(there))) !== sum) return false;
-    if (!(await verified(root, kept, { stallMs }))) return false;
+    // Its folder is found first, so nothing is waited for between reading
+    // the document's own file and removing this one.
     const parts = path.split("/");
     const leaf = parts.pop();
     let dir = root;
-    for (const part of parts) dir = await dir.getDirectoryHandle(part);
+    for (const part of parts) dir = await reading(path, stallMs, () => dir.getDirectoryHandle(part));
+    const there = await reading(path, stallMs, async () => (await dir.getFileHandle(leaf)).getFile());
+    if (there.size !== size) return false;
+    if (seen !== undefined ? there.lastModified !== seen : (await reading(path, stallMs, () => sha256(there))) !== sum) return false;
+    if (!(await verified(root, kept, { stallMs }))) return false;
     await writing(path, stallMs, () => dir.removeEntry(leaf));
     return true;
   };

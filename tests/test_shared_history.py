@@ -511,6 +511,17 @@ def test_a_document_tried_again_while_its_first_save_has_not_ended_is_not_saved_
     assert other == PATH_A.replace(".pdf", " (1).pdf") and len(listing) == 2
 
 
+def test_the_same_bytes_begun_together_under_two_names_are_saved_once(tab):
+    call = f"""async (s, root) => {{
+      const f = await import('/folders.js');
+      const dir = 'Statement Sweep/American Express/';
+      const got = await Promise.all(['one.pdf', 'two.pdf'].map((n) => f.writeFile(root, dir + n, new Blob([{json.dumps(PDF_A)}]), {{ reuseSame: true }}).then((v) => v, (e) => e.constructor.name)));
+      return [got, await ({LISTING})(root)];
+    }}"""
+    got, listing = run(tab, call)["result"]
+    assert listing == ["one.pdf"] and got[0].endswith("one.pdf") and got[1] in ("StillSaving", got[0])
+
+
 def test_without_asking_for_it_the_same_bytes_are_still_saved_beside(tab):
     call = with_pdfs({PATH_A: PDF_A}, f"async (s, root) => (await import('/folders.js')).writeFile(root, {json.dumps(PATH_A)}, new Blob([{json.dumps(PDF_A)}]))")
     assert run(tab, call)["result"] == PATH_A.replace(".pdf", " (1).pdf")

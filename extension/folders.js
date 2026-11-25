@@ -106,6 +106,25 @@ async function sameBytes(file, blob) {
 // forgotten when the browser next starts the extension, and its empty file
 // is then taken over.
 const underWay = new Map();
+// The bytes of each, for a save of the same bytes under another name begun
+// meanwhile (sameUnderWay).
+const underWayBytes = new Map();
+// Looking for the same bytes under another name and then claiming a name are
+// one step for the saves that look, taken one at a time: two of the same
+// bytes begun together would otherwise each find nothing and both be saved.
+let lookings = Promise.resolve();
+function looking(work) {
+  const next = lookings.then(work);
+  lookings = next.catch(() => {});
+  return next;
+}
+async function sameUnderWay(parts, blob) {
+  const prefix = parts.length ? `${parts.join("/")}/` : "";
+  for (const [key, other] of underWayBytes) {
+    if (key.startsWith(prefix) && !key.slice(prefix.length).includes("/") && (await sameBytes(other, blob))) return true;
+  }
+  return false;
+}
 export class StillSaving extends Error {}
 
 // A file of this folder with exactly these bytes under any other name: the
@@ -162,31 +181,36 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
   let dir = root;
   for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
   const keyOf = (leaf) => [...parts, leaf].join("/");
-  // The same bytes under another name of the folder: looked for before the
-  // name is claimed, so a large folder does not use up the time a claim is
-  // given, and given the same time of its own. `anyName: false`, for a file
-  // being renamed: its old name is beside it.
-  if (reuseSame && !replace && anyName) {
-    let timer;
-    const elsewhere = await Promise.race([
-      sameElsewhere(dir, fileName, blob),
-      new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error("The chosen folder did not answer within 30 seconds.")), CLAIM_WAIT_MS); }),
-    ]).finally(() => clearTimeout(timer));
-    if (elsewhere) return keyOf(elsewhere);
-  }
   const gone = () => new Error("The chosen folder did not answer within 30 seconds.");
-  const [name, handle] = await claim(async (live) => {
+  const take = (leaf) => { underWay.set(keyOf(leaf), blob.size); underWayBytes.set(keyOf(leaf), blob); };
+  const claimed = () => claim(async (live) => {
     if (reuseSame && !replace) {
       const found = await nameOrSame(dir, fileName, blob, keyOf);
       if (found.same) return [found.name, null];
       if (!live()) throw gone();
-      underWay.set(keyOf(found.name), blob.size);
+      take(found.name);
       return [found.name, await dir.getFileHandle(found.name, { create: true })];
     }
     const chosen = replace ? fileName : await freeName(dir, fileName);
     if (!live()) throw gone();
-    if (!replace) underWay.set(keyOf(chosen), blob.size);
+    if (!replace) take(chosen);
     return [chosen, await dir.getFileHandle(chosen, { create: true })];
+  });
+  // The same bytes under another name of the folder: looked for before the
+  // name is claimed, so a large folder does not use up the time a claim is
+  // given, and given the same time of its own. `anyName: false`, for a file
+  // being renamed: its old name is beside it.
+  const [name, handle] = !(reuseSame && !replace && anyName) ? await claimed() : await looking(async () => {
+    let timer;
+    const elsewhere = await Promise.race([
+      sameElsewhere(dir, fileName, blob),
+      new Promise((resolve, reject) => { timer = setTimeout(() => reject(gone()), CLAIM_WAIT_MS); }),
+    ]).finally(() => clearTimeout(timer));
+    if (elsewhere) return [elsewhere, null];
+    // Being saved in this folder right now, under this name or another: not
+    // saved beside it.
+    if (await sameUnderWay(parts, blob)) throw new StillSaving("This document is still being saved from an earlier try. It is tried again next time.");
+    return claimed();
   });
   if (!handle) return keyOf(name);
   try {
@@ -196,6 +220,7 @@ export async function writeFile(root, path, blob, { replace = false, reuseSame =
     if ((await handle.getFile()).size !== blob.size) throw new Error("The saved copy is incomplete.");
   } finally {
     underWay.delete(keyOf(name));
+    underWayBytes.delete(keyOf(name));
   }
   return keyOf(name);
 }

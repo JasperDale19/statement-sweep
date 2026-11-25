@@ -180,3 +180,17 @@ def test_an_old_file_is_kept_when_its_new_copy_is_gone_before_it_would_be_remove
     }}"""
     got = run(tab, with_pdfs({OLD_A: PDF_A}, call), {}, {"x.json": entry({"amex": {"o1": facts(OLD_A, PDF_A)}})})["result"]
     assert got["names"] == [OLD_A.split("/")[-1]]
+
+
+def test_a_place_one_site_was_renamed_to_is_not_removed_for_the_next_site(tab):
+    # Asked of the second site with what the first one took: its old file, the first one's new one, stays.
+    call = f"""async (s, root) => {{
+      const before = await s.reconcile(root);
+      const plan = s.renamePlan(before.record, [{json.dumps(AMEX)}], {json.dumps(NAMING)});
+      const done = await s.renameSite(root, before, 'amex', plan.moves, {{ taken: new Set([{json.dumps(OLD_A)}]) }});
+      const names = []; const dir = await (await root.getDirectoryHandle('Statement Sweep')).getDirectoryHandle('American Express');
+      for await (const [n] of dir.entries()) names.push(n);
+      return {{ done, names: names.sort() }};
+    }}"""
+    got = run(tab, with_pdfs({OLD_A: PDF_A}, call), {}, {"x.json": entry({"amex": {"o1": facts(OLD_A, PDF_A)}})})["result"]
+    assert got["names"] == sorted([OLD_A.split("/")[-1], NEW_A.split("/")[-1]])

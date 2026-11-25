@@ -1741,9 +1741,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       };
       logs.runLine(`Renaming asked for in Settings: ${total} document(s) to rename, ${plan.alone} left as they are (title not known).`);
       let removed = 0;
+      const taken = new Set();
       for (const site of [...new Set([...plan.moves, ...plan.old].map((m) => m.site))]) {
         try {
-          const r = await renameSite(folder.handle, folder, site, plan.moves.filter((m) => m.site === site), { progress, old: plan.old.filter((o) => o.site === site) });
+          const r = await renameSite(folder.handle, folder, site, plan.moves.filter((m) => m.site === site), { progress, taken, old: plan.old.filter((o) => o.site === site) });
           renamed += r.renamed;
           skipped += r.skipped;
           removed += r.removed;
@@ -1754,15 +1755,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           break;
         }
       }
-      // A write given up on may still be going: nothing else starts until
-      // it has ended, or five minutes have passed.
+      // A write given up on may still be going: it is given five minutes
+      // to end before the folder is read again.
       await Promise.race([mutationsSettled(), new Promise((r) => setTimeout(r, 5 * 60 * 1000))]);
       // What is kept of the folder is of its old names: read again.
       await reconcileFolder("after renaming");
       await checkDue();
       return { state: "ok", renamed, skipped, removed, alone: plan.alone, problem };
     } finally {
-      renaming = false;
+      // No run or rename starts while a write of this one is still going.
+      mutationsSettled().then(() => { renaming = false; });
       clearInterval(keepAlive);
     }
   })().then(answer, (e) => answer({ state: "problem", text: `Renaming did not finish: ${errorText(e).split("\n")[0]}` }));
