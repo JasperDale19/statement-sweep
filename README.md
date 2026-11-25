@@ -94,16 +94,23 @@ names or sends everything to any folder you choose. It also switches sites
 off and turns on card offers.
 
 **Using more than one computer.** Choose the same synced folder (in iCloud
-Drive or Google Drive, say) in Statement Sweep on each computer. Each site
-that saves documents into it adds a small file listing them, with where each
-was saved and a fingerprint of it, to that folder's `Statement Sweep History`
-folder. Before saving a statement, a computer skips it only if another
-listed it and that very file is in the folder. A statement that has not
-synced down yet is saved, so at worst one is saved twice, never missed.
-Documents saved before the folder was chosen are not listed, so the first
-sync into it saves them there. A site another computer has just synced may
-still be shown as due here; syncing it saves nothing new. Sites you added with Add
-This Site are not shared. **History File** in Settings turns this off.
+Drive or Google Drive, say) in Statement Sweep on each computer, and they
+work as one: each knows what is saved, each site's schedule and what is
+due, with nothing to export or import. The popup shows "In sync with" the
+folder and how many documents it holds.
+
+- Each site that saves documents adds a small file listing them, with where
+  each was saved and a fingerprint of it, to the folder's
+  `Statement Sweep History` folder. A statement counts as saved only when
+  that very file is in the folder, so one that has not synced yet is saved
+  rather than missed.
+- If the folder cannot be read, because it is still downloading, say,
+  nothing is saved and the popup says why. Run it again in a moment.
+- Every computer needs the same version of Statement Sweep or newer.
+- Documents a computer saved before the folder was chosen are not listed
+  until they are in the folder and saved again; one with the same contents
+  is recognised and not copied. Sites you added with Add This Site are not
+  shared. **History File** in Settings turns all of this off.
 
 ## Card offers
 

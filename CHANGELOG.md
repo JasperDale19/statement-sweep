@@ -8,17 +8,24 @@ What changed for people using Statement Sweep, newest first. The version is
 - Two documents saved at the same moment under the same file name are
   both kept: the second gets a name of its own instead of being written
   over the first.
-- Copies of Statement Sweep on different computers can share one folder,
-  such as one in iCloud Drive or Google Drive, without saving the same
-  document twice. Each site that saves documents into the folder adds a
-  small file listing them, with where each was saved and a fingerprint of
-  it, to the folder's `Statement Sweep History` folder. Before saving a
-  document, a copy skips it only if another copy listed it and that very
-  file is in the folder it is saving to. A document still syncing, never
-  uploaded, or in a different folder is saved. Documents saved somewhere
-  else before are not listed, so they are still saved into the shared
-  folder. A list that cannot be read is reported in the run log and left as
-  it is. **History File** in Settings turns it off.
+- Statement Sweep on two or more computers works as one. Choose the same
+  synced folder on each, such as one in iCloud Drive or Google Drive, and
+  every computer knows what is saved, each site's schedule and what is due,
+  with nothing to export or import. The popup says "In sync with" the
+  folder and how many documents it holds.
+  - Each site that saves documents adds a small file listing them, with
+    where each was saved and a fingerprint of it, to the folder's
+    `Statement Sweep History` folder. A site looked at with nothing new is
+    noted there too, so another computer does not ask for it again that day.
+  - A document counts as saved only when that very file is in the folder.
+    Each file is read once to check it; after that its size and date are
+    enough, so checking a large folder takes a moment.
+  - If the folder cannot be read, because it is still downloading, say,
+    nothing is saved and the popup says why. A slow folder never makes
+    documents be saved again.
+  - A document already in the folder with exactly the same contents is
+    never saved beside itself as a "(1)" copy.
+  - **History File** in Settings turns sharing off.
 - Settings is shorter and calmer. File naming is two menus and an example:
   each menu shows what its choices give when opened, the pattern box and
   its tools appear only for Custom, and rules for one site wait behind

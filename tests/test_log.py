@@ -51,6 +51,7 @@ window.__local = {};
 Object.defineProperty(window, 'chrome', { value: { storage: { local: {
   get: async (keys) => { if (keys === null) return JSON.parse(JSON.stringify(__local)); const out = {}; for (const k of [].concat(keys)) if (k in __local) out[k] = JSON.parse(JSON.stringify(__local[k])); return out; },
   set: async (o) => { Object.assign(__local, JSON.parse(JSON.stringify(o))); },
+  remove: async (keys) => { for (const k of [].concat(keys)) delete __local[k]; },
 } } } });
 """
 

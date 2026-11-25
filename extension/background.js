@@ -7,12 +7,12 @@
 import { SITES as PROVIDERS, ADDED, builtInFor, cleanConfig, lastKey, loadSites, primedKey, withSite } from "./sites.js";
 import { pathFor } from "./naming.js";
 import { makeCapture } from "./capture.js";
-import { INBOX, getFolder, isGranted, moveFromInbox, withinChosen, writeFile } from "./folders.js";
-import { backfillFor, documentDate, isDue, isTaxDocument, keysFor, localIso, standingOf } from "./cadence.js";
+import { INBOX, getFolder, isGranted, moveFromInbox, setFolder, withinChosen, writeFile } from "./folders.js";
+import { backfillFor, documentDate, folderKey, isDue, isTaxDocument, keysFor, localIso, standingOf } from "./cadence.js";
 import { amount, cleanUrl, errorText, makeLogs } from "./log.js";
 import { OFFERS_WAIT, hasOffers, makeOffers, offersWanted, offersWords } from "./offers.js";
 import { addFound, estimateNew, foundKey, foundOf, siteProgress } from "./progress.js";
-import { factsOf, inFolderAlready, readShared, sharingOn, writeEntry } from "./shared-history.js";
+import { FolderUnavailable, Stopped, factsOf, fileFacts, reconcile, sharingOn, stillThere, writeChecked, writeEntry } from "./shared-history.js";
 
 // The run's logs (log.js): what each site did and why it stopped, written to
 // each site's Logs folder as the run goes. `note` adds one line for a site.
@@ -67,70 +67,167 @@ function within(ms, why, work, stoppable = false) {
     stopWakes.delete(wake);
   });
 }
-// What other copies saved into your chosen folder (shared-history.js). Its
-// entries are read before a run (and again for a sweep whose folder is not
-// the one read), and each site that saved documents into the folder writes a
-// new entry when it ends. A document another copy saved is skipped only once
-// its file checks out in the folder the sweep saves to. A folder that does
-// not answer (a cloud file still downloading, say) is given SYNC_WAIT_MS and
-// the sweep goes on without it, saving what it could not check.
-const SYNC_WAIT_MS = 30 * 1000;
-const files = (n) => `${n} history ${n === 1 ? "file" : "files"}`;
-// The entries last read, and the folder they were read from.
-let sharedRead = null;
-async function readEntries(destination) {
-  const r = await readShared(destination);
-  if (!r.off) sharedRead = { handle: destination, result: r };
-  return r;
+// The folder shared with other computers (shared-history.js) is the one
+// record of what is saved. Before a run, when the popup opens, and when
+// Settings changes the folder, the folder is read (reconcileFolder): its
+// entries, checked against its files. What it holds is kept three ways:
+//   - `folderNow`, in memory, which a run's sweeps decide by;
+//   - `folder:<site>` in chrome.storage.local, which the popup and the due
+//     badge read through cadence.js, so each computer shows one record;
+//   - `folderState` in IndexedDB: the folder it was read from and the files
+//     already hashed, so an unchanged file is not read again.
+// A folder that cannot be read is never taken for an empty one: the run
+// saves nothing and says why. `folderGen` goes up whenever Settings changes
+// the folder or turns sharing on or off, so nothing read before the change
+// is kept or used after it.
+const FOLDER_SYNC = "folderSync";
+const FOLDER_STATE = "folderState";
+const FOLDER_FRESH_MS = 60 * 1000;
+const ENTRY_WAIT_MS = 60 * 1000;
+let folderGen = 0;
+let folderNow = null;
+let reconciling = null;
+// What is kept of the folder is changed one step at a time.
+let folderSteps = Promise.resolve();
+function folderStep(work) {
+  const next = folderSteps.then(work);
+  folderSteps = next.catch(() => {});
+  return next;
 }
-// Never throws: a read that fails is a line in the run's log.
-async function syncHistory(when) {
-  sharedRead = null;
-  try {
-    const r = await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", async () => {
-      const destination = await getFolder("destination");
-      if (!destination) return null;
-      if (!(await isGranted(destination))) return { problems: [{ name: "", problem: "Your chosen folder needs permission again." }], read: [], listed: 0, unknown: [] };
-      return readEntries(destination);
-    });
-    if (!r || r.off) return r;
-    logs.runLine(`History ${when}: ${files(r.read.length)} read, listing ${r.listed} document${r.listed === 1 ? "" : "s"} saved into the folder.`);
-    for (const p of r.problems) logs.runLine(p.name ? `History file ${p.name} not used: ${p.problem}` : `History not read ${when}: ${p.problem}`, "WARN");
-    if (r.unknown.length) logs.runLine(`History files name ${r.unknown.length} site(s) this copy does not have; they are left in their files.`);
-    return r;
-  } catch (e) {
-    logs.runLine(`History not read ${when}: ${errorText(e)}`, "WARN");
-    return { problems: [{ name: "", problem: errorText(e) }], read: [], listed: 0, unknown: [] };
-  }
+const emptySite = () => ({ ids: [], dates: {}, tax: [], paths: {}, checked: "" });
+const forPopup = ({ ids, dates, tax, checked }) => ({ ids, dates, tax, checked });
+async function sayFolder(state) {
+  await chrome.storage.session.set({ [FOLDER_SYNC]: state }).catch(() => {});
+  chrome.runtime.sendMessage({ type: "board" }).catch(() => {});
 }
+async function forgetFolderRecord() {
+  const keys = Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith("folder:"));
+  if (keys.length) await chrome.storage.local.remove(keys);
+}
+// Whether `folderNow` is the record of `destination`, read since the last change in Settings.
+const folderIs = async (destination) => Boolean(folderNow && destination && folderNow.gen === folderGen
+  && (await folderNow.handle.isSameEntry(destination).catch(() => false)));
 
-// Of `docs`, those another copy saved into `destination`, checked there.
-// Never throws: one that cannot be checked is saved.
-async function savedByOthers(provider, destination, docs) {
-  if (!destination || !docs.length) return new Set();
+// Reads the folder. Answers { state: "none" } with no folder shared, { state:
+// "ok", documents, entries, at, name }, { state: "stopped" }, or { state:
+// "problem", text } when it could not be read. Never throws. One at a time: a
+// second asker gets the answer of the read under way.
+function reconcileFolder(when, stopped = () => false) {
+  if (!reconciling) reconciling = readFolder(when, stopped).finally(() => { reconciling = null; });
+  return reconciling;
+}
+async function readFolder(when, stopped) {
+  const gen = folderGen;
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20000);
   try {
-    return await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", async () => {
-      if (!(await sharingOn())) return new Set();
-      const read = sharedRead && (await sharedRead.handle.isSameEntry(destination).catch(() => false)) ? sharedRead.result : await readEntries(destination);
-      if (!read || read.off) return new Set();
-      return inFolderAlready(destination, provider.id, docs.map((d) => d.id), read.index);
+    const destination = await getFolder("destination");
+    if (!destination || !(await sharingOn())) {
+      folderNow = null;
+      await folderStep(forgetFolderRecord);
+      await sayFolder({ state: "none" });
+      return { state: "none" };
+    }
+    if (!(await isGranted(destination))) throw new FolderUnavailable("Your folder needs permission again. Allow it in Statement Sweep's Settings, then run it again. Nothing was saved.");
+    const kept = await getFolder(FOLDER_STATE).catch(() => null);
+    const known = kept && kept.handle && (await kept.handle.isSameEntry(destination).catch(() => false)) ? kept.files || {} : {};
+    const began = Date.now();
+    let told = 0;
+    const progress = (done, total) => {
+      if (Date.now() - told < 400 && done < total) return;
+      told = Date.now();
+      sayFolder({ state: "checking", done, total, name: destination.name });
+    };
+    await sayFolder({ state: "checking", done: 0, total: 0, name: destination.name });
+    const r = await reconcile(destination, { known, stopped, progress });
+    return await folderStep(async () => {
+      if (gen !== folderGen) return { state: "problem", text: "Your folder was changed in Settings. Run it again." };
+      await setFolder(FOLDER_STATE, { handle: destination, files: r.files });
+      const writes = {}, gone = [];
+      for (const key of Object.keys(await chrome.storage.local.get(null))) if (key.startsWith("folder:")) gone.push(key);
+      for (const [site, rec] of Object.entries(r.record)) writes[folderKey(site)] = forPopup(rec);
+      await chrome.storage.local.set(writes);
+      const stale = gone.filter((key) => !(key in writes));
+      if (stale.length) await chrome.storage.local.remove(stale);
+      folderNow = { gen, handle: destination, record: r.record, files: r.files, at: Date.now() };
+      const state = { state: "ok", documents: r.documents, entries: r.entries, at: Date.now(), name: destination.name, problems: r.problems.length };
+      logs.runLine(`Folder read ${when}: ${r.entries} history file(s), ${r.documents} document(s) in the folder, ${r.hashed} file(s) read to check them, in ${amount(Date.now() - began)} ms.`);
+      for (const problem of r.problems) logs.runLine(`History file ${problem.name} not used: ${problem.problem}`, "WARN");
+      if (r.unknown.length) logs.runLine(`History files name ${r.unknown.length} site(s) this copy does not have; they are left in their files.`);
+      await sayFolder(state);
+      return state;
     });
   } catch (e) {
-    note(provider, `Could not check what other computers saved, so these are saved here: ${errorText(e)}`, "WARN");
-    return new Set();
+    if (e instanceof Stopped) {
+      await sayFolder({ state: "none" });
+      return { state: "stopped" };
+    }
+    folderNow = null;
+    const text = e instanceof FolderUnavailable ? e.message : `Your folder could not be read: ${errorText(e).split("\n")[0]} Nothing was saved.`;
+    logs.runLine(`Folder not read ${when}: ${text}`, "WARN");
+    await sayFolder({ state: "problem", text });
+    return { state: "problem", text };
+  } finally {
+    clearInterval(keepAlive);
   }
 }
 
 // A site's new entry: the documents it saved into `entry.destination`, the
-// folder its sweep used from its start. Never throws.
+// folder its sweep used from its start, then added to what is kept of the
+// folder. Never throws. Sites you added are not shared: their ids are this
+// copy's own.
 async function writeSiteEntry(provider, entry) {
-  if (!entry.destination || !entry.saved.length) return;
+  if (!entry.destination || !entry.saved.length || provider.added) return;
+  let written;
   try {
-    const name = await within(SYNC_WAIT_MS, "Your chosen folder did not answer within 30 seconds.", () => writeEntry(entry.destination, provider.id, entry.saved));
-    if (name) note(provider, `History entry written: ${entry.saved.length} document(s) in ${name}.`);
+    written = await within(ENTRY_WAIT_MS, "Your folder did not answer within a minute.", () => writeEntry(entry.destination, provider.id, entry.saved));
+    if (written) note(provider, `History entry written: ${entry.saved.length} document(s) in ${written.name}.`);
   } catch (e) {
     note(provider, `History entry not written, so another computer may save these ${entry.saved.length} document(s) again: ${errorText(e)}`, "WARN");
   }
+  if (!written) return;
+  await folderStep(async () => {
+    if (!(await folderIs(entry.destination))) return;
+    const site = (folderNow.record[provider.id] = folderNow.record[provider.id] || emptySite());
+    for (const { id, facts } of entry.saved) {
+      const now = await fileFacts(entry.destination, facts.path).catch(() => null);
+      // Not as it was saved: left out, and found by the next read of the folder.
+      if (!now || now.size !== facts.size) continue;
+      if (!site.ids.includes(id)) site.ids.push(id);
+      site.paths[id] = facts.path;
+      if (written.dates[id]) site.dates[id] = written.dates[id];
+      if (written.tax.includes(id) && !site.tax.includes(id)) site.tax.push(id);
+      folderNow.files[facts.path] = { size: now.size, mtime: now.mtime, sha256: facts.sha256 };
+    }
+    await setFolder(FOLDER_STATE, { handle: folderNow.handle, files: folderNow.files });
+    await chrome.storage.local.set({ [folderKey(provider.id)]: forPopup(site) });
+  }).catch((e) => note(provider, `What is kept of the folder was not brought up to date: ${errorText(e)}`, "WARN"));
+}
+
+// The run's entry of the sites it looked at with nothing left to save, so
+// another computer does not ask for them again today.
+async function writeCheckedEntry(sites) {
+  const destination = await getFolder("destination").catch(() => null);
+  const built = sites.filter((p) => !p.added);
+  if (!built.length || !(await folderIs(destination))) return;
+  const day = localIso();
+  const days = Object.fromEntries(built.map((p) => [p.id, day]));
+  try {
+    const name = await within(ENTRY_WAIT_MS, "Your folder did not answer within a minute.", () => writeChecked(destination, days));
+    logs.runLine(`History entry written: ${built.length} site(s) checked, in ${name}.`);
+  } catch (e) {
+    logs.runLine(`The sites checked were not written to the folder, so another computer may ask for them again: ${errorText(e)}`, "WARN");
+    return;
+  }
+  await folderStep(async () => {
+    if (!(await folderIs(destination))) return;
+    const writes = {};
+    for (const p of built) {
+      const site = (folderNow.record[p.id] = folderNow.record[p.id] || emptySite());
+      site.checked = day;
+      writes[folderKey(p.id)] = forPopup(site);
+    }
+    await chrome.storage.local.set(writes);
+  }).catch(() => {});
 }
 
 const minutes = (ms) => `${amount(ms / 60000)} minute${ms === 60000 ? "" : "s"}`;
@@ -706,7 +803,10 @@ function startsPdf(base64) {
 }
 
 // `destination` is the folder this site's sweep uses (sweep), or none.
-async function saveOne(tabId, provider, doc, destination) {
+// `shared`: the folder is shared with other computers, so a document that
+// cannot be written to it stops the site, rather than going to Downloads
+// where no other computer would know of it.
+async function saveOne(tabId, provider, doc, destination, shared = false) {
   const { naming } = await chrome.storage.local.get("naming");
   const filename = pathFor(naming, provider, doc);
   // A PDF in hand: fetched by the page, opened in a new tab, or printed (capture.js).
@@ -740,10 +840,11 @@ async function saveOne(tabId, provider, doc, destination) {
       try {
         const bytes = Uint8Array.from(atob(pdf.base64), (c) => c.charCodeAt(0));
         const payload = new Blob([bytes], { type: "application/pdf" });
-        const path = await writeFile(destination, withinChosen(destination.name, filename), payload);
+        const path = await writeFile(destination, withinChosen(destination.name, filename), payload, { reuseSame: true });
         return { ok: true, bytes: size, inFolder: path, payload };
       } catch (e) {
         logs.error(provider, "writing to the chosen folder", e);
+        if (shared) return { ok: false, stop: true, why: `Your folder could not be written, so this site stops here. ${errorText(e).split("\n")[0]}` };
         return { ok: await saveBase64(pdf.base64, filename), bytes: size, note: "Some documents were saved in Downloads because your chosen folder could not be written." };
       }
     }
@@ -775,7 +876,7 @@ async function saveOne(tabId, provider, doc, destination) {
       // Read now: the staged file is taken out of Downloads once moved.
       const staged = await (await inbox.getFileHandle(stageName)).getFile();
       payload = new Blob([await staged.arrayBuffer()], { type: "application/pdf" });
-      moved = await moveFromInbox(inbox, stageName, destination, withinChosen(destination.name, filename));
+      moved = await moveFromInbox(inbox, stageName, destination, withinChosen(destination.name, filename), { reuseSame: true });
     } catch (e) {
       logs.error(provider, "moving a download from the inbox", e);
       // Not a PDF by its bytes: not saved, so it is fetched again next time,
@@ -785,6 +886,7 @@ async function saveOne(tabId, provider, doc, destination) {
         await chrome.downloads.erase({ id: landed.id }).catch(() => {});
         return { ok: false, why: "The site sent something that is not a PDF." };
       }
+      if (shared) return { ok: false, stop: true, why: `Your folder could not be written, so this site stops here. One download stayed in Downloads, in ${INBOX}.` };
       return { ok: true, bytes: landed.bytes, note: `Some documents stayed in Downloads, in ${INBOX}, because they could not be moved to your chosen folder.` };
     }
     await chrome.downloads.removeFile(landed.id).catch(() => {});
@@ -944,10 +1046,16 @@ function bounded(provider, docs) {
 // `entry` gathers what is saved into the chosen folder, for its history entry
 // (writeSiteEntry). The folder is taken once, here: a folder chosen in
 // Settings during the sweep is used from the next one.
-async function sweep(provider, together = false, entry = { destination: null, saved: [] }) {
+async function sweep(provider, together = false, entry = { destination: null, saved: [], checked: false }) {
   const destination = await getFolder("destination");
   entry.destination = destination || null;
   const sharing = Boolean(destination) && (await sharingOn());
+  // The folder's record this run read (reconcileFolder). Without it nothing
+  // is saved: what another computer saved there would be saved again.
+  if (sharing && !(await folderIs(destination))) {
+    return say(provider.id, "bad", "Nothing was saved. Your folder was changed, or could not be read. Run it again.");
+  }
+  const folder = sharing ? folderNow : null;
   const key = `seen:${provider.id}`;
   const record = (await chrome.storage.local.get(key))[key];
   const seen = new Set(record || []);
@@ -1051,13 +1159,24 @@ async function sweep(provider, together = false, entry = { destination: null, sa
       note(provider, `First sync, only new ones from now on: ${ids.length} listed and marked as seen, none saved.`);
       await closeOurs();
       await chrome.storage.local.set({ [`checked:${provider.id}`]: localIso() });
+      entry.checked = true;
       return say(provider.id, "ok", `Nothing new. ${ids.length} already there ${ids.length === 1 ? "is" : "are"} left as they are; new ones are saved from now on.`);
     }
 
     const unsaved = (list.docs || []).filter((d) => !seen.has(d.id));
     // Saved into this folder by another computer, and its file is here:
     // left as it is, and not added to this copy's record.
-    const theirs = await savedByOthers(provider, destination, unsaved);
+    // Looked at once more, here, so one removed since the folder was read is saved.
+    let theirs = new Set();
+    if (folder) {
+      const paths = (folder.record[provider.id] || {}).paths || {};
+      try {
+        theirs = await stillThere(destination, folder, provider.id, unsaved.filter((d) => paths[d.id]).map((d) => d.id));
+      } catch (e) {
+        logs.error(provider, "looking in the folder", e);
+        return say(provider.id, "bad", `${count} saved. ${e instanceof FolderUnavailable ? e.message : `Your folder could not be read. ${errorText(e).split("\n")[0]}`}`);
+      }
+    }
     const fresh = unsaved.filter((d) => !theirs.has(d.id));
     if (theirs.size) note(provider, `${theirs.size} already in your chosen folder, saved by another computer.`);
     // What is done already, and what this list holds still to do. Counted
@@ -1089,7 +1208,7 @@ async function sweep(provider, together = false, entry = { destination: null, sa
       // A click whose download Chrome may hold waits HELD_WAIT_MS for it
       // (nextDownload), so its save is given that and a page call's time more.
       const saveWait = doc.method === "click" && downloadsInTab.get(tab.id) ? HELD_WAIT_MS + PAGE_WAIT_MS : SAVE_WAIT_MS;
-      const result = await timed(provider, "save", () => within(saveWait, `The save did not finish within ${minutes(saveWait)}.`, () => saveOne(tab.id, provider, doc, destination)))
+      const result = await timed(provider, "save", () => within(saveWait, `The save did not finish within ${minutes(saveWait)}.`, () => saveOne(tab.id, provider, doc, destination, sharing)))
         .catch((e) => {
           logs.error(provider, `saving ${doc.id}`, e);
           return { ok: false, why: `It could not be saved. ${e.message}`, error: e };
@@ -1181,6 +1300,7 @@ async function sweep(provider, together = false, entry = { destination: null, sa
   // Looked, and all there was is saved: the popup waits a few days before
   // asking for this site again, even if a new one is due by its schedule.
   await chrome.storage.local.set({ [`checked:${provider.id}`]: localIso() });
+  entry.checked = true;
   // A note is something worth knowing about a sweep that did all it could.
   return say(provider.id, "ok", done, offered);
 }
@@ -1411,14 +1531,24 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20000);
     try {
       await loadSites();
-      await syncHistory("before the run");
       const { off = [] } = await chrome.storage.local.get("off");
-      await whyChosen(message, off).catch((e) => logs.runLine(`Could not say why each site was chosen: ${errorText(e)}`, "WARN"));
       // Get New Documents names the sites that need running (popup.js,
       // targetsOf); a ticked site that is up to date is not among them.
       const asked = Array.isArray(message.sites) ? message.sites : null;
       const chosen = PROVIDERS.filter((p) => (message.only ? p.id === message.only
         : !off.includes(p.id) && (!asked || asked.includes(p.id))));
+      // The shared folder is read first, with every site on the board so the
+      // popup shows the sync under way and Stop works. If it cannot be read,
+      // nothing is saved: what is in it would be saved again.
+      if ((await getFolder("destination").catch(() => null)) && (await sharingOn())) {
+        for (const provider of chosen) await say(provider.id, "working", "Checking your folder…");
+      }
+      const folder = await reconcileFolder("before the run", () => stopAsked);
+      if (folder.state === "problem" || folder.state === "stopped") {
+        for (const provider of chosen) await say(provider.id, "bad", folder.state === "stopped" ? `Not reached. ${STOPPED}` : `Nothing was saved. ${folder.text}`);
+        return;
+      }
+      await whyChosen(message, off).catch((e) => logs.runLine(`Could not say why each site was chosen: ${errorText(e)}`, "WARN"));
       // Get New Documents starts every site at once, each in a tab of its own;
       // Run starts the one site, as before.
       const together = !message.only && chosen.length > 1;
@@ -1428,6 +1558,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           if (i) await say(provider.id, "working", `Waiting for ${group[i - 1].name}, which uses the same site.`);
         }
       }
+      const checkedSites = [];
       const runGroup = async (group) => {
         for (const provider of group) {
           if (stopAsked) {
@@ -1436,7 +1567,7 @@ chrome.runtime.onMessage.addListener((message, sender) => {
           }
           logs.started(provider);
           note(provider, `Sweep of ${provider.name} begins${together ? ", with the other sites at once" : ""}.`);
-          const entry = { destination: null, saved: [] };
+          const entry = { destination: null, saved: [], checked: false };
           try {
             await sweep(provider, together, entry);
           } catch (e) {
@@ -1444,11 +1575,13 @@ chrome.runtime.onMessage.addListener((message, sender) => {
             await say(provider.id, "bad", `That did not finish. ${e.message}`);
           }
           await writeSiteEntry(provider, entry);
+          if (entry.checked) checkedSites.push(provider);
           await logs.ended(provider);
         }
       };
       // Without `together` there is one group of one, so this is the old run.
       await Promise.all(groups.map(runGroup));
+      await writeCheckedEntry(checkedSites);
     } catch (e) {
       logs.runLine(`The run failed: ${errorText(e)}`, "ERROR");
     } finally {
@@ -1463,20 +1596,29 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   })();
 });
 
-// Settings chose a folder: what other copies saved there is taken in now, so
-// the popup knows what is due before the first run. Heard only from this
-// extension's own pages; not while a run goes, which read it at its start.
+// The popup opened (`syncHistory`), or Settings changed the folder or turned
+// sharing on or off (`folderChanged`): the folder is read now, so the popup
+// shows what is saved and due before any run. Heard only from this
+// extension's own pages. A run reads the folder itself at its start.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== "syncHistory" || !fromOwnPage(sender)) return;
+  if (!message || (message.type !== "syncHistory" && message.type !== "folderChanged") || !fromOwnPage(sender)) return;
   const answer = (o) => { try { sendResponse(o); } catch (e) { /* the page closed */ } };
-  if (running) {
-    answer({ busy: true });
-    return;
-  }
-  syncHistory("on choosing the folder").then(async (r) => {
-    answer(r || { none: true });
+  (async () => {
+    if (message.type === "folderChanged") {
+      // Nothing read from the folder before this is kept or used after it.
+      folderGen += 1;
+      folderNow = null;
+      await folderStep(forgetFolderRecord);
+      await sayFolder({ state: "none" });
+    }
+    if (running) return { busy: true };
+    if (message.type === "syncHistory" && folderNow && folderNow.gen === folderGen && Date.now() - folderNow.at < FOLDER_FRESH_MS) {
+      return (await chrome.storage.session.get(FOLDER_SYNC))[FOLDER_SYNC] || { state: "none" };
+    }
+    const state = await reconcileFolder(message.type === "folderChanged" ? "after a change in Settings" : "on opening the popup");
     await checkDue();
-  });
+    return state;
+  })().then(answer, () => answer({ state: "none" }));
   return true;
 });
 

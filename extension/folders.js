@@ -24,6 +24,8 @@ async function withStore(mode, work) {
     const request = work(transaction.objectStore(STORE));
     transaction.oncomplete = () => resolve(request.result);
     transaction.onerror = () => reject(transaction.error);
+    // Out of room, say: without this an aborted write would never answer.
+    transaction.onabort = () => reject(transaction.error || new Error("The browser's storage did not take it."));
   });
 }
 
@@ -79,15 +81,50 @@ function claim(work) {
   return next;
 }
 
-export async function writeFile(root, path, blob, { replace = false } = {}) {
+//
+// `reuseSame`, for documents: a file already there under the name, or one of
+// its "(1)", "(2)" names, with exactly these bytes is the same document, saved
+// before by this computer or another. It is left as it is and its path
+// answered, so saving a document twice never makes a second copy.
+async function sameBytes(file, blob) {
+  if (file.size !== blob.size) return false;
+  const [a, b] = await Promise.all([file.arrayBuffer(), blob.arrayBuffer()]);
+  const x = new Uint8Array(a), y = new Uint8Array(b);
+  for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return false;
+  return true;
+}
+
+async function nameOrSame(dir, name, blob) {
+  const dot = name.lastIndexOf(".");
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let n = 0; n < 1000; n += 1) {
+    const candidate = n ? `${stem} (${n})${ext}` : name;
+    let there;
+    try {
+      there = await dir.getFileHandle(candidate);
+    } catch (e) {
+      if (e.name === "NotFoundError") return { name: candidate, same: false };
+      throw e;
+    }
+    if (await sameBytes(await there.getFile(), blob)) return { name: candidate, same: true };
+  }
+  throw new Error("Too many files share that name.");
+}
+
+export async function writeFile(root, path, blob, { replace = false, reuseSame = false } = {}) {
   const parts = path.split("/");
   const fileName = parts.pop();
   let dir = root;
   for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
   const [name, handle] = await claim(async () => {
+    if (reuseSame && !replace) {
+      const found = await nameOrSame(dir, fileName, blob);
+      return [found.name, found.same ? null : await dir.getFileHandle(found.name, { create: true })];
+    }
     const chosen = replace ? fileName : await freeName(dir, fileName);
     return [chosen, await dir.getFileHandle(chosen, { create: true })];
   });
+  if (!handle) return [...parts, name].join("/");
   const out = await handle.createWritable();
   await out.write(blob);
   await out.close();
@@ -95,12 +132,12 @@ export async function writeFile(root, path, blob, { replace = false } = {}) {
   return [...parts, name].join("/");
 }
 
-export async function moveFromInbox(inbox, stageName, root, path) {
+export async function moveFromInbox(inbox, stageName, root, path, options = {}) {
   const file = await (await inbox.getFileHandle(stageName)).getFile();
   // A statement must be a PDF by its bytes, whatever the site labelled it.
   if (/\.pdf$/i.test(path)) {
     const head = new Uint8Array(await file.slice(0, 5).arrayBuffer());
     if (String.fromCharCode(...head) !== "%PDF-") throw new Error("The site sent something that is not a PDF.");
   }
-  return writeFile(root, path, file);
+  return writeFile(root, path, file, options);
 }

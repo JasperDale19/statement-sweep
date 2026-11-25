@@ -93,6 +93,10 @@ function targetsOf(board, off) {
 // opens they start as the sites that need updating; your ticks then last
 // until it closes, and are never saved. Switching a site off is in Settings.
 let picked = null;
+// Whether you have ticked or unticked a site yourself. Until then the ticks
+// follow what is due, which changes once the shared folder is read.
+let pickedByYou = false;
+let folderSeen = "";
 const pickedOf = (off) => PROVIDERS.filter((p) => picked && picked.has(p.id) && !off.includes(p.id)).map((p) => p.id);
 
 function say(board, off) {
@@ -173,6 +177,7 @@ function row(provider, status, off, busy, board, skipped) {
   }
   box.dataset.focus = `box:${provider.id}`;
   box.addEventListener("change", () => {
+    pickedByYou = true;
     if (box.checked) picked.add(provider.id); else picked.delete(provider.id);
     drawHeader(board, off);
   });
@@ -385,6 +390,15 @@ function drawFooter() {
   document.getElementById("offersOnCount").textContent = on ? `Card offers on for ${on} ${on === 1 ? "site" : "sites"}` : "Card offers are off";
 }
 
+const amountOf = (n) => Number(n || 0).toLocaleString();
+export function folderLine(sync) {
+  if (!sync || !sync.state || sync.state === "none") return "";
+  if (sync.state === "checking") return sync.total ? `Checking your folder… ${amountOf(sync.done)} of ${amountOf(sync.total)}` : "Checking your folder…";
+  if (sync.state === "problem") return sync.text || "Your folder could not be read.";
+  const docs = `${amountOf(sync.documents)} ${sync.documents === 1 ? "document" : "documents"}`;
+  return `In sync with “${sync.name || "your folder"}”: ${docs} saved, on this computer or another.`;
+}
+
 async function draw() {
   await loadSites();
   const { board = {} } = await chrome.storage.session.get("board");
@@ -399,7 +413,18 @@ async function draw() {
   const busy = busyIn(board);
   const hasResults = Object.keys(board).length > 0;
   // First draw after opening: tick the sites that need updating.
-  if (!picked) picked = new Set(targetsOf(board, off));
+  // The folder shared with other computers (background.js, reconcileFolder):
+  // how far reading it has got, what it holds, or why it could not be read.
+  const { folderSync } = await chrome.storage.session.get("folderSync");
+  const folderWords = folderLine(folderSync);
+  // The folder was read since the ticks were set: what is due has changed.
+  const folderAt = folderSync && folderSync.state === "ok" ? String(folderSync.at) : "";
+  if (!picked || (!pickedByYou && !busyIn(board) && folderAt && folderAt !== folderSeen)) picked = new Set(targetsOf(board, off));
+  if (folderAt) folderSeen = folderAt;
+  const line = document.getElementById("folderLine");
+  line.hidden = !folderWords;
+  line.textContent = folderWords;
+  line.dataset.kind = folderSync && folderSync.state === "problem" ? "problem" : "";
   drawHeader(board, off);
   // Within each run state, what needs you first, as PaperPull's home page
   // lists it: late, then tax forms and gaps, then too little history, then
@@ -462,3 +487,6 @@ go.addEventListener("click", async () => {
 document.getElementById("settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
 chrome.runtime.onMessage.addListener((m) => { if (m.type === "board") draw(); });
 draw();
+// The shared folder is read as the popup opens, so what is saved and due is
+// right before anything is run. The engine redraws this when it is done.
+Promise.resolve().then(() => chrome.runtime.sendMessage({ type: "syncHistory" })).then(() => draw(), () => {});
